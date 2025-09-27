@@ -15,16 +15,16 @@ const CampaignDetail = lazy(() => import("./pages/CampaignDetail"));
 const CampaignReport = lazy(() => import("./pages/CampaignReport"));
 const Donors = lazy(() => import("./pages/Donors"));
 const Recipients = lazy(() => import("./pages/Recipients"));
-const Shippers = lazy(() => import("./pages/Shippers"));
+const Shippers = lazy(() => import("./shipper/Shippers"));
 const Reports = lazy(() => import("./pages/Reports"));
 const Settings = lazy(() => import("./pages/Settings"));
 const Delivery = lazy(() => import("./pages/Delivery"));
 
-// ✨ Donor feature pages (cho 4 nút)
-const DonorDonate = lazy(() => import("./pages/DonorDonate"));   // /donor/donate
-const DonorHistory = lazy(() => import("./pages/DonorHistory")); // /donor/history (+ /donor/donations)
-const DonorPickup  = lazy(() => import("./pages/DonorPickup"));  // /donor/pickup
-const SupportChat  = lazy(() => import("./pages/SupportChat"));  // /support/chat
+// ✨ Donor feature pages
+const DonorDonate = lazy(() => import("./pages/DonorDonate"));
+const DonorHistory = lazy(() => import("./pages/DonorHistory"));
+const DonorPickup  = lazy(() => import("./pages/DonorPickup"));
+const SupportChat  = lazy(() => import("./pages/SupportChat"));
 
 // Auth pages
 const Login = lazy(() => import("./pages/Login"));
@@ -122,6 +122,25 @@ function PublicOnly({ children }) {
   return children;
 }
 
+// 🟢 Guard dành riêng cho Shipper
+function RequireShipper({ children }) {
+  const { user, loading } = useAuthState();
+  const location = useLocation();
+
+  if (loading) return <Loader message="Đang xác thực..." />;
+  if (!user) return <Navigate to="/login" replace state={{ from: location }} />;
+
+  if (user.role !== "shipper") {
+    return (
+      <div className="p-6 text-center text-red-600">
+        Bạn không có quyền truy cập vào trang này.
+      </div>
+    );
+  }
+
+  return children;
+}
+
 /* ========================
    App Routes
 ======================== */
@@ -187,22 +206,29 @@ export default function App() {
               <Route path="campaigns/:id" element={<CampaignDetail />} />
               <Route path="campaigns/:id/report" element={<CampaignReport />} />
 
-              {/* Trang tổng Nhà hảo tâm */}
+              {/* Donor */}
               <Route path="donors" element={<Donors />} />
-
-              {/* ✨ Các route thực thi 4 nút */}
               <Route path="donor/donate" element={<DonorDonate />} />
               <Route path="donor/history" element={<DonorHistory />} />
-              <Route path="donor/donations" element={<DonorHistory />} /> {/* alias cho "Xem tất cả" */}
+              <Route path="donor/donations" element={<DonorHistory />} />
               <Route path="donor/pickup" element={<DonorPickup />} />
               <Route path="support/chat" element={<SupportChat />} />
 
-              {/* Giao – Nhận */}
+              {/* Delivery & Recipients */}
               <Route path="delivery" element={<Delivery />} />
               <Route path="deliveries" element={<Navigate to="/delivery" replace />} />
-
               <Route path="recipients" element={<Recipients />} />
-              <Route path="shippers" element={<Shippers />} />
+
+              {/* 🟢 Shipper riêng */}
+              <Route
+                path="shippers"
+                element={
+                  <RequireShipper>
+                    <Shippers />
+                  </RequireShipper>
+                }
+              />
+
               <Route path="reports" element={<Reports />} />
               <Route path="settings" element={<Settings />} />
             </Route>

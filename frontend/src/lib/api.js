@@ -1,8 +1,10 @@
 ﻿// frontend/src/lib/api.js
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
+// Base URL từ .env hoặc fallback localhost
+export const API_BASE =
+  (import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api").replace(/\/$/, "");
 
-/** Lấy token lưu trữ (localStorage > sessionStorage) */
+/** Lấy token (ưu tiên localStorage) */
 function token() {
   return (
     localStorage.getItem("bua_token") ||
@@ -11,22 +13,13 @@ function token() {
   );
 }
 
-/**
- * request(path, { method, body, headers })
- * - Tự gắn Authorization nếu có token
- * - Tự set Content-Type cho JSON body
- * - ❗ Tắt cache cho GET bằng cache: 'no-store' (fix vụ 304 không thấy item mới)
- */
-async function request(
-  path,
-  { method = "GET", body, headers = {} } = {}
-) {
-  const m = (method || "GET").toUpperCase();
+/** Request wrapper */
+async function request(path, { method = "GET", body, headers = {} } = {}) {
+  const m = method.toUpperCase();
   const isGet = m === "GET";
 
   const h = {
     Accept: "application/json",
-    // thêm mấy header nhẹ để hạn chế cache từ proxy/browse
     ...(isGet ? { "Cache-Control": "no-cache", Pragma: "no-cache" } : {}),
     ...headers,
   };
@@ -39,7 +32,6 @@ async function request(
     method: m,
     headers: h,
     body: body && !(body instanceof FormData) ? JSON.stringify(body) : body,
-    // 🔥 FIX chính: không cho cache với GET để list luôn thấy dữ liệu mới
     cache: isGet ? "no-store" : "default",
   });
 
@@ -49,13 +41,9 @@ async function request(
       const j = await res.clone().json();
       msg = j?.message || j?.error || JSON.stringify(j);
     } catch {
-      try {
-        msg = await res.clone().text();
-      } catch {
-        /* ignore */
-      }
+      msg = await res.text();
     }
-    // thêm mã lỗi cho dễ debug
+    console.error("API error:", { path, status: res.status, msg });
     throw new Error(msg || `${res.status} ${res.statusText}`);
   }
 
@@ -63,10 +51,10 @@ async function request(
   return ct.includes("application/json") ? res.json() : res.text();
 }
 
-export const apiGet    = (p)         => request(p);
-export const apiPost   = (p, body)   => request(p, { method: "POST", body });
-export const apiPatch  = (p, body)   => request(p, { method: "PATCH", body });
-export const apiDelete = (p)         => request(p, { method: "DELETE" });
+export const apiGet = (p) => request(p);
+export const apiPost = (p, body) => request(p, { method: "POST", body });
+export const apiPatch = (p, body) => request(p, { method: "PATCH", body });
+export const apiDelete = (p) => request(p, { method: "DELETE" });
 
 export function useApi() {
   return { apiGet, apiPost, apiPatch, apiDelete };

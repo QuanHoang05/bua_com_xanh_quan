@@ -1,5 +1,7 @@
+// backend/src/routes/payments.momo.js
 import express from "express";
 import crypto from "crypto";
+import { requireAuth } from "./auth.js"; // để lấy user từ JWT
 
 const router = express.Router();
 
@@ -36,14 +38,20 @@ async function dbRun(sql, params = []) {
 
 /* ==================== Helpers ==================== */
 const safe = (v) => (v == null ? "" : String(v));
-
 function hmacSHA256(secret, data) {
   return crypto.createHmac("sha256", secret).update(data).digest("hex");
 }
-
 function buildCreateRawSig({
-  accessKey, amount, extraData, ipnUrl, orderId, orderInfo,
-  partnerCode, redirectUrl, requestId, requestType
+  accessKey,
+  amount,
+  extraData,
+  ipnUrl,
+  orderId,
+  orderInfo,
+  partnerCode,
+  redirectUrl,
+  requestId,
+  requestType,
 }) {
   return (
     `accessKey=${accessKey}` +
@@ -58,7 +66,6 @@ function buildCreateRawSig({
     `&requestType=${requestType}`
   );
 }
-
 function buildIpnRawSig(accessKey, body) {
   const b = body || {};
   return (
@@ -79,7 +86,7 @@ function buildIpnRawSig(accessKey, body) {
 }
 
 /* ==================== Create payment ==================== */
-router.post("/create", async (req, res, next) => {
+router.post("/create", requireAuth, async (req, res, next) => {
   try {
     const {
       MOMO_PARTNER_CODE = "MOMO",
@@ -91,11 +98,14 @@ router.post("/create", async (req, res, next) => {
       PAYMENTS_FORCE_MOCK = "0",
     } = process.env;
 
-    const CREATE_URL = MOMO_CREATE_URL || "https://test-payment.momo.vn/v2/gateway/api/create";
+    const CREATE_URL =
+      MOMO_CREATE_URL || "https://test-payment.momo.vn/v2/gateway/api/create";
 
     const amount = Number(req.body?.amount || 0);
     if (!Number.isFinite(amount) || amount < 1000) {
-      return res.status(400).json({ error: "amount không hợp lệ (>= 1.000 VND)" });
+      return res
+        .status(400)
+        .json({ error: "amount không hợp lệ (>= 1.000 VND)" });
     }
 
     const partnerCode = MOMO_PARTNER_CODE;
@@ -106,6 +116,7 @@ router.post("/create", async (req, res, next) => {
       (req.body?.orderInfo && String(req.body.orderInfo).slice(0, 190)) ||
       "Ung ho chien dich";
 
+    // optional extraData
     let extraData = "";
     if (req.body?.extraData != null) {
       try {
@@ -150,11 +161,14 @@ router.post("/create", async (req, res, next) => {
       signature,
     };
 
-    // Insert donation pending
+    /* --- Save order into DB with user_id & donor_name --- */
+    const uid = req.user.id;
+    const donorName = req.user.name || req.user.email || "Ẩn danh";
     await dbRun(
-      `INSERT INTO donations (order_id, campaign_id, type, amount, currency, status, created_at)
-       VALUES (?, ?, 'money', ?, 'VND', 'pending', NOW())`,
-      [orderId, req.body?.campaign_id || null, amount]
+      `INSERT INTO donations 
+       (order_id, campaign_id, user_id, donor_name, type, amount, currency, status, created_at)
+       VALUES (?, ?, ?, ?, 'money', ?, 'VND', 'pending', NOW())`,
+      [orderId, req.body?.campaign_id || null, uid, donorName, amount]
     );
 
     // Mock mode
@@ -207,21 +221,23 @@ router.post("/ipn", express.json({ type: "*/*" }), async (req, res) => {
     const valid = expected === body.signature;
 
     const orderId = String(body.orderId || "");
-    const amount = Number(body.amount || 0);
     const transId = String(body.transId || "");
     const resultCode = Number(body.resultCode ?? 99);
     const paidAt = new Date();
 
-    const row = await dbGet(`SELECT id, status FROM donations WHERE order_id = ?`, [orderId]);
+    const row = await dbGet(
+      `SELECT id, status FROM donations WHERE order_id = ?`,
+      [orderId]
+    );
 
     if (resultCode === 0 && valid) {
-      if (row) {
-        if (row.status !== "success") {
-          await dbRun(
-            `UPDATE donations SET status='success', paid_at=?, bank_txn_id=?, bank_code=? WHERE order_id=?`,
-            [paidAt, transId, body.bankCode || null, orderId]
-          );
-        }
+      if (row && row.status !== "success") {
+        await dbRun(
+          `UPDATE donations 
+           SET status='success', paid_at=?, bank_txn_id=?, bank_code=? 
+           WHERE order_id=?`,
+          [paidAt, transId, body.bankCode || null, orderId]
+        );
       }
     } else {
       if (row && row.status === "pending") {

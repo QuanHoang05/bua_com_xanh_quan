@@ -1,46 +1,189 @@
-﻿/* Tailwind v4 */
+﻿/* Tailwind v4 core */
 @import "tailwindcss";
-@source "./**/*.{html,js,jsx,ts,tsx}";
 
-/* Base */
-@layer base {
-  html, body { @apply min-h-screen bg-slate-50 text-slate-800 antialiased; }
+/* =========================
+   BASE: nền & chữ rõ ràng
+========================= */
+html, body {
+  min-height: 100vh;
+  background: #f8fafc;           /* slate-50 */
+  color: #0f172a;                 /* slate-900 */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
-/* Components (đậm, không mờ) */
-@layer components {
-  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition active:scale-95; }
-  .btn-primary { @apply bg-emerald-600 text-white hover:bg-emerald-700; }
-
-  .card { @apply bg-white border border-slate-200 rounded-2xl shadow-sm hover:shadow-md; }
-
-  .input { @apply w-full rounded-xl border border-slate-300 bg-white text-slate-900 px-3 py-2 placeholder:text-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/20 focus:border-emerald-500; }
+/* Hạn chế dùng opacity cho chữ -> dùng màu xám thay vì opacity */
+:root{
+  --bg:        245 245 244;  /* stone-100 */
+  --surface:   255 255 255;  /* white */
+  --surface-2: 250 250 249;  /* stone-50 */
+  --text:      15 23 42;     /* slate-900 */
+  --muted:     100 116 139;  /* slate-500 */
+  --border:    226 232 240;  /* slate-200 */
+  --ring:      16 185 129;   /* emerald-500 */
+  --brand-1:   16 185 129;   /* emerald-500 */
+  --brand-2:   13 148 136;   /* teal-600 */
+  --accent:    59 130 246;   /* blue-500 */
 }
 
-/* Utilities thêm nếu cần */
-@layer utilities {
-  .bg-app{
-    background:
-      radial-gradient(900px 360px at 0% 0%, rgba(16,185,129,0.10) 0%, transparent 40%),
-      radial-gradient(1100px 420px at 100% 0%, rgba(59,130,246,0.08) 0%, transparent 40%),
-      #f8fafc;
-  }
+.dark{
+  --bg:        2 6 23;       /* slate-950 */
+  --surface:   2 6 23;
+  --surface-2: 3 7 18;
+  --text:      226 232 240;  /* slate-200 */
+  --muted:     148 163 184;  /* slate-400 */
+  --border:    30 41 59;     /* slate-800 */
+  --ring:      16 185 129;   /* emerald-500 */
+  --brand-1:   16 185 129;
+  --brand-2:   20 184 166;   /* teal-500 */
+  --accent:    56 189 248;   /* sky-400 */
 }
-/* ==== BỔ SUNG NHẸ, KHÔNG ĐỔI LAYOUT ==== */
-@layer components {
-  .heading-strong { @apply text-slate-900 font-semibold tracking-tight; }
-  .label-strong   { @apply text-[13px] font-medium text-slate-800; }
 
-  .para-muted     { @apply text-sm text-slate-700; }
-
-  
-  .hint-muted     { @apply text-xs text-slate-700; }
-
-  .card-contrast  { @apply border border-slate-300 dark:border-slate-600; }
-
-  .row-title      { @apply font-medium text-slate-900; }
-  .row-sub        { @apply text-xs text-slate-700; }
+/* Scrollbar tinh tế */
+* { scrollbar-width: thin; scrollbar-color: rgb(var(--border)) transparent; }
+::-webkit-scrollbar { width: 10px; height: 8px; }
+::-webkit-scrollbar-thumb {
+  background-color: rgba(var(--border), 0.9);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
-@layer base {
-  html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+
+/* =========================
+   COMPONENTS (CSS thuần)
+========================= */
+
+/* Buttons */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:.5rem;
+  border-radius: .75rem; padding:.5rem 1rem;
+  font-size:.875rem; font-weight:600;
+  box-shadow: 0 1px 2px rgba(2,6,23,.06);
+  transition: transform .12s ease, background-color .2s ease, box-shadow .2s ease;
 }
+.btn:active{ transform: scale(.96); }
+.btn-primary{
+  background:#059669; color:#fff;      /* emerald-600 */
+}
+.btn-primary:hover{ background:#047857; } /* emerald-700 */
+
+/* Card */
+.card{
+  background:#fff; border:1px solid #e2e8f0; /* slate-200 */
+  border-radius:1rem; box-shadow:0 1px 2px rgba(2,6,23,.06);
+}
+.card:hover{ box-shadow:0 6px 20px rgba(2,6,23,.08); }
+
+/* Input */
+.input{
+  width:100%; border-radius:.75rem;
+  border:1px solid #cbd5e1;  /* slate-300 */
+  background:#fff; color:#0f172a;
+  padding:.5rem .75rem; font-size:.875rem;
+  outline: none;
+  transition: box-shadow .2s, border-color .2s;
+}
+.input::placeholder{ color:#94a3b8; } /* slate-400 */
+.input:focus{
+  border-color: rgb(var(--ring));
+  box-shadow: 0 0 0 4px rgba(var(--ring), .20);
+}
+
+/* Glass panel (panel nội dung) */
+.ui-panel{
+  border-radius:1rem;
+  border:1px solid rgb(var(--border));
+  background: rgb(var(--surface));
+  box-shadow:0 1px 2px rgba(2,6,23,.06);
+  backdrop-filter: saturate(120%) blur(6px);
+  background-image:
+    radial-gradient(1200px 300px at 20% -10%, rgba(var(--brand-1),0.08), transparent 40%),
+    radial-gradient(900px 260px at 110% -20%, rgba(var(--brand-2),0.08), transparent 45%);
+}
+
+/* Icon button (topbar/toolbar) */
+.ui-icon-btn{
+  display:inline-flex; width:2.25rem; height:2.25rem;
+  align-items:center; justify-content:center; border-radius:.5rem;
+  transition: background-color .2s ease;
+}
+.ui-icon-btn:hover{ background: rgba(0,0,0,.05); }
+.dark .ui-icon-btn:hover{ background: rgba(255,255,255,.06); }
+
+/* Headings/labels/paragraphs – rõ nét, KHÔNG opacity */
+.heading-strong{ color:#0f172a; font-weight:600; letter-spacing:-0.005em; }
+.label-strong{ font-size:13px; font-weight:600; color:#1f2937; } /* gray-800 */
+.para-muted{ font-size:.9375rem; color:#334155; } /* slate-700 */
+.hint-muted{ font-size:.75rem; color:#334155; }
+
+/* Table helpers */
+.row-title{ font-weight:600; color:#0f172a; }
+.row-sub{ font-size:.75rem; color:#334155; }
+
+/* Segmented */
+.segmented{ display:inline-flex; gap:.25rem; padding:.25rem; border-radius:1rem; border:1px solid #e2e8f0; background:#fff; }
+.seg-tab{ padding:.5rem .75rem; border-radius:.75rem; font-size:.875rem; font-weight:600; color:#334155; }
+.seg-active{ background:#059669; color:#fff; box-shadow: 0 0 0 1px rgba(5,150,105,.6) inset; }
+.seg-dim{ color:#64748b; } /* KHÔNG dùng opacity */
+
+/* Pagination */
+.pagination{ display:inline-flex; align-items:center; gap:.25rem; border-radius:.75rem; border:1px solid #e2e8f0; background:#fff; padding:.5rem .75rem; }
+.page-btn{ width:2rem; height:2rem; display:flex; align-items:center; justify-content:center; border-radius:.5rem; font-size:.875rem; font-weight:600; color:#334155; }
+.page-btn:hover{ background:#f1f5f9; } /* slate-100 */
+.page-btn:active{ transform: scale(.96); }
+.page-active{ background:#059669; color:#fff; box-shadow: 0 1px 2px rgba(2,6,23,.06); }
+.page-dim{ color:#64748b; } /* KHÔNG dùng opacity */
+
+/* Topbar animated border (laser) */
+@keyframes border-laser {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.topbar-laser { position: relative; overflow: hidden; }
+.topbar-laser::before{
+  content:""; position:absolute; inset:0; padding:2px; border-radius:inherit;
+  background: linear-gradient(270deg,#06b6d4,#22c55e,#3b82f6,#ec4899);
+  background-size:400% 400%; animation:border-laser 6s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude; pointer-events:none;
+}
+
+/* Brand logo glow */
+.logo-b{
+  background: radial-gradient(circle at 30% 30%, #34d399, #10b981 60%, #0ea5e9 100%);
+  box-shadow: 0 0 10px rgba(16,185,129,.5), 0 0 20px rgba(6,182,212,.5), inset 0 0 12px rgba(255,255,255,.15);
+  color:#fff; text-shadow: 0 0 6px #34d399, 0 0 12px #06b6d4, 0 0 24px #3b82f6;
+  transition: transform .25s ease, box-shadow .25s ease;
+}
+.logo-b:hover{ transform: rotate(-6deg) scale(1.03); box-shadow: 0 0 16px rgba(16,185,129,.7), 0 0 28px rgba(6,182,212,.7); }
+
+/* Utilities nhỏ */
+.text-crisp{ font-weight:600; letter-spacing:-0.005em; -webkit-font-smoothing:auto; }
+.text-outline-dark{ text-shadow: 0 1px 0 rgba(0,0,0,.35), 0 0 1px rgba(0,0,0,.35); }
+
+/* App background radial (nếu muốn) */
+.bg-app{
+  background:
+    radial-gradient(900px 360px at 0% 0%, rgba(16,185,129,0.10) 0%, transparent 40%),
+    radial-gradient(1100px 420px at 100% 0%, rgba(59,130,246,0.08) 0%, transparent 40%),
+    #f8fafc;
+}
+/* High-contrast, crisp text (fix blurry / washed-out text on Windows/Chrome) */
+html, body {
+  color: #0f172a; /* slate-900 */
+  -webkit-font-smoothing: auto; /* DO NOT antialias on Windows */
+  -moz-osx-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
+}
+::placeholder { color: #475569; /* slate-600 - rõ hơn */ }
+/* CRISP TEXT: tránh mờ trên Windows/Chrome */
+html, body {
+  color: #0f172a; /* slate-900 */
+  -webkit-font-smoothing: auto;
+  -moz-osx-font-smoothing: auto;
+  text-rendering: optimizeLegibility;
+}
+::placeholder { color: #475569; } /* slate-600: nhìn rõ hơn slate-400 */

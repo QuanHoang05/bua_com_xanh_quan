@@ -2,11 +2,13 @@
 import express from "express";
 import cors from "cors";
 import morgan from "morgan";
+import cookieParser from "cookie-parser";
 import "dotenv/config";
 import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 
+/* ---------- Schema bootstrap (MySQL) ---------- */
 import { ensureMySQLSchema } from "./lib/ensure-mysql.js";
 
 /* ---------- Routers ---------- */
@@ -18,7 +20,7 @@ import overviewRouter from "./routes/overview.js";
 import foodsRouter from "./routes/foods.js";
 import mealsRouter from "./routes/meals.js";
 import campaignsRouter from "./routes/campaigns.js";
-import adminCampaignsRouter from "./routes/admincampaigns.js";
+import adminCampaignsRouter, { donationsRouter } from "./routes/admincampaigns.js";
 import donorsRouter from "./routes/donors.js";
 import recipientsRouter from "./routes/recipients.js";
 import shippersRouter from "./routes/shippers.js";
@@ -29,37 +31,51 @@ import paymentsRouter from "./routes/payments.js";
 import momoRouter from "./routes/payments.momo.js";
 import siteSettingsRouter from "./routes/site_settings.js";
 import pickupPointsRouter from "./routes/pickup_points.js";
-import adminPickupPointsRouter from "./routes/admin.pickup_points.js";
 import reportsPublicRouter from "./routes/reports.public.js";
 import paymentsImportRouter from "./routes/payments.import.js";
 import announcementsRouter from "./routes/announcements.js";
-import { deliveriesRouter } from "./routes/deliveries.js";
+import deliveriesRouter from "./routes/deliveries.js";
 import { bookingsRouter } from "./routes/bookings.js";
-import donorRouter from "./routes/donors.js";
+import adminDeliveriesRouter from "./routes/admin.deliveries.js";
+import adminBookingRouter from "./routes/admin_booking.js";
+import adminPaymentsRouter from "./routes/admin.payments.js";
+import adminManaUserRouter from "./routes/admin_manauser.js";
+import adminSettingsRouter from "./routes/admin_settings.js";
+import analyticsDeliveriesRouter from "./routes/analytics.deliveries.js";
 
-/* ====== Khởi tạo schema (nếu dùng MySQL) ====== */
-await ensureMySQLSchema();
+/* ====== Init schema (MySQL only) ====== */
+if ((process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql") {
+  await ensureMySQLSchema();
+}
 
 const app = express();
 app.set("trust proxy", true);
 
-/* ---------- CORS (đặt trước routers) ---------- */
-const origins = process.env.CORS_ORIGIN
-  ? process.env.CORS_ORIGIN.split(",").map((s) => s.trim())
-  : [
-      "http://localhost:5173",
-      "http://127.0.0.1:5173",
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-    ];
+/* ---------- CORS ---------- */
+const DEFAULT_ORIGINS = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4000",
+  "http://127.0.0.1:3000",
+  "http://localhost:3000",
+  "http://127.0.0.1:4000",
+];
+const ENV_ORIGINS = (process.env.CORS_ORIGIN || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+const ALLOWED_ORIGINS = [...new Set([...DEFAULT_ORIGINS, ...ENV_ORIGINS])];
 
 app.use(
   cors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true);
-      if (origins.includes(origin)) return cb(null, true);
-      return cb(new Error("Not allowed by CORS"));
-    },
+    origin:
+      process.env.NODE_ENV === "development"
+        ? function (_origin, cb) { return cb(null, true); }
+        : function (origin, cb) {
+            if (!origin) return cb(null, true);
+            if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+            return cb(new Error("Not allowed by CORS: " + origin));
+          },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: [
@@ -75,18 +91,25 @@ app.use(
     maxAge: 86400,
   })
 );
-app.options("*", cors());
+app.options(
+  "*",
+  cors({
+    origin: (_origin, cb) => cb(null, true),
+    credentials: true,
+  })
+);
 
-/* ---------- Body parsers & logger ---------- */
+/* ---------- Parsers & logger ---------- */
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(cookieParser());
 if (process.env.NODE_ENV !== "test") app.use(morgan("dev"));
-app.use("/api/donor", donorRouter);
+
 /* ---------- ESM __dirname ---------- */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-/* ---------- Static ---------- */
+/* ---------- Static uploads ---------- */
 app.use(
   "/uploads",
   express.static(path.resolve(__dirname, "..", "uploads"), {
@@ -95,98 +118,91 @@ app.use(
   })
 );
 
-/* ---------- Middleware: gắn req.user từ JWT cho toàn app ---------- */
+/* ---------- Attach req.user from JWT (Header hoặc Cookie) ---------- */
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 app.use((req, _res, next) => {
   try {
     const h = req.headers.authorization || "";
     const m = h.match(/^Bearer\s+(.+)$/i);
-    if (m) req.user = jwt.verify(m[1], JWT_SECRET); // { id, email, role }
+    let token = m?.[1];
+    if (!token && req.cookies?.token) token = req.cookies.token; // fallback cookie
+    if (token) req.user = jwt.verify(token, JWT_SECRET);
   } catch {
-    /* ignore */
+    // ignore invalid/expired token
   }
   next();
 });
 
-/* ---------- Debug endpoint: xem app đang dùng DB nào ---------- */
-app.get("/api/_debug/info", async (req, res) => {
-  const info = {
-    DB_DRIVER: process.env.DB_DRIVER || "sqlite",
-    MYSQL_HOST: process.env.DB_HOST || null,
-    MYSQL_DB: process.env.DB_NAME || null,
-    SQLITE_FILE: process.env.DB_FILE || null,
-    NODE_ENV: process.env.NODE_ENV || null,
-    PORT: process.env.PORT || 4000,
-  };
-  try {
-    // cố gắng lấy thông tin runtime
-    if ((process.env.DB_DRIVER || "sqlite") === "mysql") {
-      const { db } = await import("./lib/db.mysql.js");
-      const [r] = await db.query("SELECT DATABASE() db, NOW() `now`");
-      info.db_runtime = r?.[0] || r;
-    } else {
-      const { db } = await import("./lib/db.js");
-      info.db_runtime = { sqlite_file: db?.name || process.env.DB_FILE || "sqlite.db" };
-    }
-  } catch (e) {
-    info.db_runtime_error = String(e);
+/* ---------- Lightweight middleware: requireAuth & requireRole ---------- */
+function requireAuth(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized" });
   }
-  res.json(info);
+  next();
+}
+function requireRole(role) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const roles = Array.isArray(req.user.roles)
+      ? req.user.roles
+      : [req.user.role].filter(Boolean);
+    if (!roles.includes(role)) {
+      return res.status(403).json({ error: `Forbidden: cần quyền ${role}` });
+    }
+    next();
+  };
+}
+
+/* ---------- Route riêng cho shipper (mẫu) ---------- */
+app.get("/api/shipper/me", requireAuth, requireRole("shipper"), (req, res) => {
+  res.json({ message: "Xin chào shipper!", user: req.user });
 });
 
-/* ---------- Webhooks (đặt trước nếu cần raw body) ---------- */
+/* ---------- Webhooks ---------- */
 app.use("/api/webhooks", express.json({ type: "*/*" }), vietqrWebhook);
 
-/* ---------- Routers (THỨ TỰ QUAN TRỌNG) ---------- */
-/* 1) Các router “khai báo path tuyệt đối” như deliveriesRouter
-      đã có sẵn path bên trong (e.g. /api/admin/deliveries, /api/shippers/...) */
-app.use("/api", deliveriesRouter);
-app.use("/api", bookingsRouter);
-
-app.use("/api/admin/pickup-points", adminPickupPointsRouter);
-/* 2) Public reports & imports */
-app.use("/api/reports", reportsPublicRouter);
-app.use("/api", paymentsImportRouter);
-
-/* 3) Site settings & health */
-app.use("/api/site-settings", siteSettingsRouter);
+/* ---------- Public & feature routers ---------- */
 app.use("/api/health", healthRouter);
 
-/* 4) Auth */
 app.use("/api/auth", authRouter);
 app.use("/api/auth", authResetRouter);
 
-/* 5) Core resources */
 app.use("/api/users", usersRouter);
-app.use("/api/overview", overviewRouter);
 app.use("/api/foods", foodsRouter);
 app.use("/api/meals", mealsRouter);
-
-/* 6) Campaigns */
-app.use("/api/campaigns", campaignsRouter);             // public campaigns
-app.use("/api/admin/campaigns", adminCampaignsRouter);  // admin campaigns
-
-/* 7) Donors/Recipients/Shippers */
-app.use("/api/donors", donorsRouter);
+app.use("/api/donor", donorsRouter);
 app.use("/api/recipients", recipientsRouter);
-app.use("/api/shippers", shippersRouter);
+app.use("/api/shipper", shippersRouter);
 
-/* 8) Upload */
-app.use("/api", uploadRouter);
+app.use("/api/campaigns", campaignsRouter);
+app.use("/api/announcements", announcementsRouter);
+app.use("/api/pickup-points", pickupPointsRouter);
+app.use("/api/site-settings", siteSettingsRouter);
 
-/* 9) Admin tổng hợp */
-app.use("/api/admin", adminRouter);
+app.use("/api/deliveries", deliveriesRouter);
+app.use("/api", bookingsRouter);
+app.use("/api/reports", reportsPublicRouter);
+app.use("/api", paymentsImportRouter);
 
-/* 10) Payments */
 app.use("/api/payments", paymentsRouter);
 app.use("/api/payments/momo", momoRouter);
+app.use("/api/admin", requireAuth, requireRole("admin"), adminManaUserRouter);
+app.use("/api", adminSettingsRouter);
 
-/* 11) Pickup points */
-app.use("/api/pickup-points", pickupPointsRouter);
-app.use("/api/admin/pickup-points", adminPickupPointsRouter);
+app.use("/api", uploadRouter);
 
-/* 12) Announcements */
-app.use("/api/announcements", announcementsRouter);
+/* ---------- Admin routers (CHÚ Ý THỨ TỰ) ---------- */
+/* Đặt router cụ thể TRƯỚC các router admin tổng hợp để tránh bắt nhầm route */
+app.use("/api/admin", requireAuth, requireRole("admin"), adminPaymentsRouter);     // /api/admin/payments
+app.use("/api/admin/campaigns", adminCampaignsRouter);                             // /api/admin/campaigns/...
+app.use("/api/admin/donations", donationsRouter);                                  // /api/admin/donations/...
+app.use("/api/admin/deliveries", adminDeliveriesRouter);                           // /api/admin/deliveries/...
+app.use("/api/admin", adminBookingRouter);                                         // /api/admin/bookings...
+app.use("/api/admin", adminRouter);                                                // cuối cùng
+app.use("/api/analytics", analyticsDeliveriesRouter);
+
+/* ---------- Overview (tổng hợp) ---------- */
+app.use("/api", overviewRouter);
 
 /* ---------- Friendly root ---------- */
 app.get("/", (_req, res) => {
@@ -195,9 +211,9 @@ app.get("/", (_req, res) => {
 app.get("/favicon.ico", (_req, res) => res.status(204).end());
 
 /* ---------- 404 ---------- */
-app.use((req, res) => {
-  res.status(404).json({ error: "Not Found", path: req.originalUrl });
-});
+app.use((req, res) =>
+  res.status(404).json({ error: "Not Found", path: req.originalUrl })
+);
 
 /* ---------- Error handler ---------- */
 app.use((err, _req, res, _next) => {
@@ -211,14 +227,14 @@ app.use((err, _req, res, _next) => {
     return res.status(413).json({ error: "File quá lớn (tối đa 5MB)" });
   }
   res
-    .status(err?.statusCode || 500)
+    .status(err?.statusCode || err?.status || 500)
     .json({ error: err?.message || "Internal Server Error" });
 });
 
 /* ---------- Start server ---------- */
 const PORT = Number(process.env.PORT || 4000);
-app.listen(PORT, () => {
-  console.log(`API up at http://localhost:${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`✅ API ready at http://localhost:${PORT}`)
+);
 
 export default app;

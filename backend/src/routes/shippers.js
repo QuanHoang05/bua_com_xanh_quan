@@ -1,4 +1,9 @@
-﻿// src/routes/shippers.js
+﻿// backend/src/routes/shippers.js — fixed & hardened for MariaDB 10.4 / SQLite
+// - Tránh CASE WHEN ? ... trong UPDATE (gây “near ?”).
+// - Không dùng JSON_* trong SQL; proof_images xử lý bằng JS.
+// - Thứ tự placeholder args khớp 100% với SET ... (không còn “near ?”).
+// - Auth lấy user từ DB để có role chính xác.
+
 import { Router } from "express";
 import multer from "multer";
 import path from "path";
@@ -6,441 +11,300 @@ import fs from "fs";
 import jwt from "jsonwebtoken";
 import "dotenv/config";
 
-const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
+const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) {
-  ({ db } = await import("../lib/db.mysql.js"));
-} else {
-  ({ db } = await import("../lib/db.js"));
-}
+if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+else          ({ db } = await import("../lib/db.js"));
 
-export const shipperRouter = Router();
+const router = Router();
 
-/* =========================
-   Small DB helpers
-========================= */
+/* ---------------- DB helpers ---------------- */
 async function dbGet(sql, params = []) {
-  if (useMySQL) {
-    if (typeof db.get === "function") return await db.get(sql, params);
-    if (typeof db.query === "function") {
-      const [rows] = await db.query(sql, params);
-      return rows?.[0] ?? null;
-    }
-    throw new Error("MySQL adapter missing .get/.query");
-  }
+  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
   return db.prepare(sql).get(...params);
 }
-
 async function dbAll(sql, params = []) {
-  if (useMySQL) {
-    if (typeof db.all === "function") return await db.all(sql, params);
-    if (typeof db.query === "function") {
-      const [rows] = await db.query(sql, params);
-      return rows ?? [];
-    }
-    throw new Error("MySQL adapter missing .all/.query");
-  }
+  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
   return db.prepare(sql).all(...params);
 }
-
 async function dbRun(sql, params = []) {
-  if (useMySQL) {
-    if (typeof db.run === "function") return await db.run(sql, params);
-    if (typeof db.execute === "function") {
-      const [res] = await db.execute(sql, params);
-      return res;
-    }
-    if (typeof db.query === "function") {
-      const [res] = await db.query(sql, params);
-      return res;
-    }
-    throw new Error("MySQL adapter missing .run/.execute/.query");
-  }
+  if (useMySQL) { const [res] = await db.query(sql, params); return res; }
   return db.prepare(sql).run(...params);
 }
+const NOW_SQL = useMySQL ? "NOW()" : "datetime('now')";
 
-/* =========================
-   Auth & Role guard
-========================= */
-function authRequired(req, res, next) {
+/* ---------------- auth (fetch user -> real role) ---------------- */
+async function authRequired(req, res, next) {
   try {
-    if (req.user) return next();
-    const header = req.headers.authorization || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    const h = req.headers.authorization || "";
+    const token = h.startsWith("Bearer ") ? h.slice(7) : "";
     if (!token) return res.status(401).json({ error: "Missing token" });
-    const payload = jwt.verify(token, process.env.JWT_SECRET || "dev-secret");
-    req.user = payload; // { id, role, email, ... }
+    const payload = jwt.verify(token, process.env.JWT_SECRET || "dev-secret"); // { id, ... }
+    const u = await dbGet("SELECT id, name, email, role, phone FROM users WHERE id=?", [payload.id]);
+    if (!u) return res.status(401).json({ error: "Invalid user" });
+    req.user = u;
     next();
-  } catch {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
+  } catch { res.status(401).json({ error: "Unauthorized" }); }
 }
+const ensureRole = (...roles) => (req, res, next) => {
+  const role = String(req.user?.role || "").toLowerCase();
+  if (!roles.map(r=>r.toLowerCase()).includes(role)) return res.status(403).json({ error: "Forbidden" });
+  next();
+};
 
-function ensureRole(...roles) {
-  return (req, res, next) => {
-    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
-    next();
-  };
-}
-
-/* =========================
-   Upload (ảnh proof)
-========================= */
+/* ---------------- file upload (proofs) ---------------- */
 const proofsDir = path.join(process.cwd(), "uploads", "proofs");
 fs.mkdirSync(proofsDir, { recursive: true });
-
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, proofsDir),
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname || ".jpg");
+    const ext = path.extname(file?.originalname || ".jpg");
     cb(null, `proof_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
   },
 });
 const upload = multer({ storage });
 
-/* =========================
-   Helpers
-========================= */
-const ALLOWED = ["pending", "assigned", "picked_up", "delivering", "delivered", "canceled"];
-
+/* ---------------- state machine ---------------- */
+const ALLOWED = ["pending","assigned","picking","delivered","cancelled"];
+const edges = {
+  pending:   ["assigned","cancelled"],
+  assigned:  ["picking","cancelled"],
+  picking:   ["delivered","cancelled"],
+  delivered: [],
+  cancelled: [],
+};
 function assertTransition(prev, next) {
-  const allowedEdges = {
-    pending: ["assigned", "canceled"],
-    assigned: ["picked_up", "canceled"],
-    picked_up: ["delivering", "canceled"],
-    delivering: ["delivered", "canceled"],
-    delivered: [],
-    canceled: [],
-  };
-  if (!ALLOWED.includes(next) || !allowedEdges[prev]?.includes(next)) {
-    const err = new Error(`Invalid transition ${prev} -> ${next}`);
-    err.status = 400;
-    throw err;
+  if (!ALLOWED.includes(next) || !edges[prev]?.includes(next)) {
+    const err = new Error(`invalid_transition ${prev} -> ${next}`); err.status = 409; throw err;
   }
 }
 
-function genOTP() {
-  return (Math.floor(Math.random() * 900000) + 100000).toString();
+/* ---------------- SELECT chung ---------------- */
+const SELECT_LIST = `
+  SELECT
+    d.id, d.booking_id, d.status, d.qty, d.updated_at,
+    COALESCE(d.pickup_name, pp.name) AS pickup_name,
+    COALESCE(d.pickup_address, pp.address, pa_d.line1, pa_b.line1) AS pickup_address,
+    COALESCE(d.dropoff_name, b.dropoff_name) AS dropoff_name,
+    COALESCE(d.dropoff_address, da_d.line1, da_b.line1, b.dropoff_address) AS dropoff_address,
+    d.dropoff_phone,
+    d.note,
+    COALESCE(pa_d.lat, pa_b.lat, pp.lat)  AS pickup_lat,
+    COALESCE(pa_d.lng, pa_b.lng, pp.lng)  AS pickup_lng,
+    COALESCE(da_d.lat, da_b.lat)          AS dropoff_lat,
+    COALESCE(da_d.lng, da_b.lng)          AS dropoff_lng,
+    d.current_lat, d.current_lng,
+    d.shipper_id, d.picked_at, d.delivered_at, d.cancelled_at, d.proof_images
+  FROM deliveries d
+  LEFT JOIN bookings   b    ON b.id = d.booking_id
+  LEFT JOIN addresses  pa_d ON pa_d.id = d.pickup_addr_id
+  LEFT JOIN addresses  pa_b ON pa_b.id = b.pickup_addr_id
+  LEFT JOIN addresses  da_d ON da_d.id = d.dropoff_addr_id
+  LEFT JOIN addresses  da_b ON da_b.id = b.dropoff_addr_id
+  LEFT JOIN pickup_points pp ON pp.id = b.pickup_point
+`;
+
+/* ---------------- utils ---------------- */
+function safeArr(v) {
+  if (Array.isArray(v)) return v;
+  try { const j = JSON.parse(v || "[]"); return Array.isArray(j) ? j : []; }
+  catch { return []; }
 }
 
-/* =========================
-   ADMIN endpoints
-========================= */
-shipperRouter.post(
-  "/admin/orders",
-  authRequired,
-  ensureRole("admin"),
-  async (req, res) => {
-    const {
-      title,
-      donor_id,
-      receiver_id,
-      pickup_address,
-      pickup_lat,
-      pickup_lng,
-      drop_address,
-      drop_lat,
-      drop_lng,
-      area_code,
-      otp_code,
-      qr_payload,
-    } = req.body;
+/* ======================================================================
+   GET /api/shipper/deliveries
+====================================================================== */
+router.get("/deliveries", authRequired, ensureRole("shipper","admin"), async (req, res) => {
+  try {
+    const status = String(req.query.status || "active").toLowerCase();
+    const q = String(req.query.q || "").trim();
+    const page = Math.max(1, parseInt(req.query.page || 1, 10));
+    const pageSize = Math.max(1, Math.min(200, parseInt(req.query.page_size || req.query.pageSize || 20, 10)));
 
-    const otp = otp_code || genOTP();
-    const qr = qr_payload || JSON.stringify({ otp });
+    const conds = []; const p = [];
+    if (String(req.user.role).toLowerCase() === "shipper") {
+      conds.push("d.shipper_id = ?"); p.push(req.user.id);
+    }
+    if (status && status !== "all") {
+      if (status === "active") conds.push("d.status IN ('assigned','picking')");
+      else { conds.push("d.status = ?"); p.push(status); }
+    } else {
+      conds.push("d.status IN ('pending','assigned','picking','delivered','cancelled')");
+    }
+    if (q) {
+      conds.push(`(
+        d.id LIKE ? OR
+        IFNULL(d.pickup_address,'')  LIKE ? OR
+        IFNULL(d.dropoff_address,'') LIKE ? OR
+        IFNULL(pa_d.line1,'') LIKE ? OR IFNULL(da_d.line1,'') LIKE ?
+      )`);
+      p.push(`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`,`%${q}%`);
+    }
 
-    const sql = useMySQL
-      ? `INSERT INTO orders 
-           (title, donor_id, receiver_id, pickup_address, pickup_lat, pickup_lng, 
-            drop_address, drop_lat, drop_lng, area_code, status, otp_code, qr_payload, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,NOW(),NOW())`
-      : `INSERT INTO orders 
-           (title, donor_id, receiver_id, pickup_address, pickup_lat, pickup_lng, 
-            drop_address, drop_lat, drop_lng, area_code, status, otp_code, qr_payload, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`;
+    const where = conds.length ? `WHERE ${conds.join(" AND ")}` : "";
 
-    const params = [
-      title || null,
-      donor_id,
-      receiver_id,
-      pickup_address,
-      pickup_lat ?? null,
-      pickup_lng ?? null,
-      drop_address,
-      drop_lat ?? null,
-      drop_lng ?? null,
-      area_code || null,
-      "pending",
-      otp,
-      qr,
-    ];
+    const cnt = await dbGet(
+      `SELECT COUNT(1) AS c FROM deliveries d
+       LEFT JOIN addresses  pa_d ON pa_d.id = d.pickup_addr_id
+       LEFT JOIN addresses  da_d ON da_d.id = d.dropoff_addr_id
+       ${where}`, p
+    );
+    const total = Number(cnt?.c || 0);
+    const offset = (page - 1) * pageSize;
 
-    const r = await dbRun(sql, params);
-    const id = useMySQL ? r.insertId : r.lastInsertRowid;
-
-    await dbRun(
-      `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-      [id, req.user.id, "status_changed", JSON.stringify({ to: "pending" })]
+    const items = await dbAll(
+      `${SELECT_LIST}
+       ${where}
+       ORDER BY d.updated_at DESC
+       LIMIT ? OFFSET ?`,
+      [...p, pageSize, offset]
     );
 
-    const order = await dbGet(`SELECT * FROM orders WHERE id = ?`, [id]);
-    res.json(order);
+    // chuẩn hóa images
+    for (const it of items) it.proof_images = safeArr(it.proof_images);
+
+    res.json({ items, total, page, pageSize });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "server_error" });
   }
-);
-
-shipperRouter.post(
-  "/admin/orders/:id/assign",
-  authRequired,
-  ensureRole("admin"),
-  async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const { shipper_id } = req.body;
-      const order = await dbGet(`SELECT * FROM orders WHERE id = ?`, [id]);
-      if (!order) return res.status(404).json({ error: "Order not found" });
-      assertTransition(order.status, "assigned");
-
-      const sql = useMySQL
-        ? `UPDATE orders SET assigned_shipper_id=?, status='assigned', updated_at=NOW() WHERE id=?`
-        : `UPDATE orders SET assigned_shipper_id=?, status='assigned', updated_at=CURRENT_TIMESTAMP WHERE id=?`;
-      await dbRun(sql, [shipper_id, id]);
-
-      await dbRun(
-        `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-        [id, req.user.id, "status_changed", JSON.stringify({ to: "assigned", shipper_id })]
-      );
-
-      res.json({ ok: true });
-    } catch (e) {
-      next(e);
-    }
-  }
-);
-
-/* =========================
-   SHIPPER endpoints
-========================= */
-shipperRouter.get(
-  "/orders/available",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res) => {
-    const { area = "", limit = 50 } = req.query;
-    const params = [];
-    let sql = `SELECT * FROM orders WHERE status='pending' AND assigned_shipper_id IS NULL`;
-    if (area) {
-      sql += ` AND area_code = ?`;
-      params.push(area);
-    }
-    sql += ` ORDER BY created_at DESC LIMIT ?`;
-    params.push(Number(limit));
-    const rows = await dbAll(sql, params);
-    res.json(rows);
-  }
-);
-
-shipperRouter.get(
-  "/orders/mine",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res) => {
-    const { status = "" } = req.query;
-    const params = [req.user.id];
-    let sql = `SELECT * FROM orders WHERE assigned_shipper_id = ?`;
-    if (status) {
-      sql += ` AND status = ?`;
-      params.push(status);
-    }
-    sql += ` ORDER BY updated_at DESC`;
-    const rows = await dbAll(sql, params);
-    res.json(rows);
-  }
-);
-
-shipperRouter.post(
-  "/orders/:id/accept",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const order = await dbGet(`SELECT * FROM orders WHERE id = ?`, [id]);
-      if (!order) return res.status(404).json({ error: "Order not found" });
-      if (order.assigned_shipper_id && order.assigned_shipper_id !== req.user.id) {
-        return res.status(409).json({ error: "Order already assigned" });
-      }
-      assertTransition(order.status, "assigned");
-
-      const sql = useMySQL
-        ? `UPDATE orders SET assigned_shipper_id=?, status='assigned', updated_at=NOW() WHERE id=?`
-        : `UPDATE orders SET assigned_shipper_id=?, status='assigned', updated_at=CURRENT_TIMESTAMP WHERE id=?`;
-      await dbRun(sql, [req.user.id, id]);
-
-      await dbRun(
-        `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-        [id, req.user.id, "accepted", JSON.stringify({ by: "shipper" })]
-      );
-
-      res.json({ ok: true });
-    } catch (e) {
-      next(e);
-    }
-  }
-);
-
-shipperRouter.post(
-  "/orders/:id/telemetry",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res) => {
-    const { id } = req.params;
-    const { lat, lng, speed, heading, eta } = req.body;
-    const order = await dbGet(`SELECT id, assigned_shipper_id FROM orders WHERE id=?`, [id]);
-    if (!order) return res.status(404).json({ error: "Order not found" });
-    if (order.assigned_shipper_id !== req.user.id)
-      return res.status(403).json({ error: "Not your order" });
-
-    await dbRun(
-      `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-      [id, req.user.id, "telemetry", JSON.stringify({ lat, lng, speed, heading, eta })]
-    );
-    res.json({ ok: true });
-  }
-);
-
-shipperRouter.post(
-  "/orders/:id/status",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const { status } = req.body;
-      const order = await dbGet(`SELECT * FROM orders WHERE id=?`, [id]);
-      if (!order) return res.status(404).json({ error: "Order not found" });
-      if (order.assigned_shipper_id !== req.user.id)
-        return res.status(403).json({ error: "Not your order" });
-
-      assertTransition(order.status, status);
-
-      const sql = useMySQL
-        ? `UPDATE orders SET status=?, updated_at=NOW() WHERE id=?`
-        : `UPDATE orders SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`;
-      await dbRun(sql, [status, id]);
-
-      await dbRun(
-        `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-        [id, req.user.id, "status_changed", JSON.stringify({ from: order.status, to: status })]
-      );
-
-      res.json({ ok: true });
-    } catch (e) {
-      next(e);
-    }
-  }
-);
-
-shipperRouter.post(
-  "/orders/:id/proof",
-  authRequired,
-  ensureRole("shipper"),
-  upload.array("files", 6),
-  async (req, res) => {
-    const { id } = req.params;
-    const order = await dbGet(`SELECT * FROM orders WHERE id=?`, [id]);
-    if (!order) return res.status(404).json({ error: "Order not found" });
-    if (order.assigned_shipper_id !== req.user.id)
-      return res.status(403).json({ error: "Not your order" });
-
-    const files = req.files || [];
-    const urls = [];
-
-    for (const f of files) {
-      const rel = `/uploads/proofs/${path.basename(f.path)}`.replace(/\\/g, "/");
-      urls.push(rel);
-      await dbRun(
-        `INSERT INTO delivery_proofs (order_id, shipper_id, url, note) VALUES (?,?,?,?)`,
-        [id, req.user.id, rel, req.body.note || null]
-      );
-    }
-
-    await dbRun(
-      `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-      [id, req.user.id, "proof_uploaded", JSON.stringify({ urls })]
-    );
-
-    res.json({ ok: true, urls });
-  }
-);
-
-shipperRouter.post(
-  "/orders/:id/confirm-delivery",
-  authRequired,
-  ensureRole("shipper"),
-  async (req, res, next) => {
-    try {
-      const { id } = req.params;
-      const { otp } = req.body;
-      const order = await dbGet(`SELECT * FROM orders WHERE id=?`, [id]);
-      if (!order) return res.status(404).json({ error: "Order not found" });
-      if (order.assigned_shipper_id !== req.user.id)
-        return res.status(403).json({ error: "Not your order" });
-
-      if (order.otp_code !== String(otp))
-        return res.status(400).json({ error: "Mã OTP không đúng" });
-
-      assertTransition(order.status, "delivered");
-
-      const sql = useMySQL
-        ? `UPDATE orders SET status='delivered', updated_at=NOW() WHERE id=?`
-        : `UPDATE orders SET status='delivered', updated_at=CURRENT_TIMESTAMP WHERE id=?`;
-      await dbRun(sql, [id]);
-
-      await dbRun(
-        `INSERT INTO shipment_events (order_id, actor_id, event, meta_json) VALUES (?,?,?,?)`,
-        [id, req.user.id, "delivered", JSON.stringify({ method: "otp" })]
-      );
-
-      res.json({ ok: true });
-    } catch (e) {
-      next(e);
-    }
-  }
-);
-
-shipperRouter.get(
-  "/orders/:id",
-  authRequired,
-  ensureRole("shipper", "admin"),
-  async (req, res) => {
-    const { id } = req.params;
-    const order = await dbGet(`SELECT * FROM orders WHERE id=?`, [id]);
-    if (!order) return res.status(404).json({ error: "Order not found" });
-
-    if (req.user.role === "shipper" && order.assigned_shipper_id !== req.user.id)
-      return res.status(403).json({ error: "Not your order" });
-
-    const events = await dbAll(
-      `SELECT * FROM shipment_events WHERE order_id=? ORDER BY created_at ASC`,
-      [id]
-    );
-    const proofs = await dbAll(
-      `SELECT id, url, created_at FROM delivery_proofs WHERE order_id=? ORDER BY created_at ASC`,
-      [id]
-    );
-    res.json({ order, events, proofs });
-  }
-);
-
-/* =========================
-   Error handler local
-========================= */
-shipperRouter.use((err, _req, res, _next) => {
-  const code = err.status || 500;
-  res.status(code).json({ error: err.message || "Internal error" });
 });
 
-export default shipperRouter; // ✅ thêm default export để khớp với server.js
+/* ======================================================================
+   GET /api/shipper/deliveries/:id
+====================================================================== */
+router.get("/deliveries/:id", authRequired, ensureRole("shipper","admin"), async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const row = await dbGet(`${SELECT_LIST} WHERE d.id=?`, [id]);
+    if (!row) return res.status(404).json({ error: "not_found" });
+
+    if (String(req.user.role).toLowerCase() === "shipper" && row.shipper_id !== req.user.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+
+    row.proof_images = safeArr(row.proof_images);
+    res.json({ delivery: row });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "server_error" });
+  }
+});
+
+/* ======================================================================
+   PATCH /api/shipper/deliveries/:id  (update status)
+   body: { status, photo_url?, pod_name?, note? }
+====================================================================== */
+router.patch("/deliveries/:id", authRequired, ensureRole("shipper","admin"), async (req, res) => {
+  try {
+    const id = String(req.params.id);
+    const to = String(req.body?.status || "").trim();
+    const photo_url = String(req.body?.photo_url || "");
+    const pod_name  = String(req.body?.pod_name || "");
+    const note      = req.body?.note == null ? "" : String(req.body.note);
+
+    const dv = await dbGet(`SELECT id, shipper_id, status, proof_images FROM deliveries WHERE id=?`, [id]);
+    if (!dv) return res.status(404).json({ error: "not_found" });
+    const isAdmin = String(req.user.role).toLowerCase() === "admin";
+    if (!isAdmin && dv.shipper_id !== req.user.id) return res.status(403).json({ error: "forbidden" });
+
+    assertTransition(dv.status, to);
+
+    // merge proof images ở JS
+    const imgs = safeArr(dv.proof_images);
+    if (photo_url && !imgs.includes(photo_url)) imgs.push(photo_url);
+
+    // Build SET + args theo thứ tự chắc chắn — KHÔNG dùng CASE WHEN ? ...
+    const sets = ["status=?", "proof_images=?", "updated_at=" + NOW_SQL];
+    const args = [to, JSON.stringify(imgs)];
+
+    if (pod_name) { sets.push("dropoff_name=?"); args.push(pod_name); }
+    if (note)     { sets.push("note=?");         args.push(note); }
+
+    // timestamps theo trạng thái
+    if (to === "picking")   sets.push("picked_at="    + NOW_SQL);
+    if (to === "delivered") sets.push("delivered_at=" + NOW_SQL);
+    if (to === "cancelled") sets.push("cancelled_at=" + NOW_SQL);
+
+    // shipper lock (ensure the row is assigned)
+    sets.push("shipper_id=?");
+    args.push(isAdmin && !dv.shipper_id ? req.user.id : (dv.shipper_id || req.user.id));
+
+    // where id cuối cùng
+    args.push(id);
+    await dbRun(`UPDATE deliveries SET ${sets.join(", ")} WHERE id=?`, args);
+
+    const fresh = await dbGet(`${SELECT_LIST} WHERE d.id=?`, [id]);
+    fresh.proof_images = safeArr(fresh.proof_images);
+    res.json(fresh);
+  } catch (e) {
+    if (String(e.message).startsWith("invalid_transition")) {
+      return res.status(409).json({ error: "invalid_transition" });
+    }
+    res.status(500).json({ error: e.message || "server_error" });
+  }
+});
+
+/* ======================================================================
+   PATCH /api/shipper/telemetry  (cập nhật vị trí realtime)
+   Body: { lat, lng, delivery_id? }
+====================================================================== */
+router.patch("/telemetry", authRequired, ensureRole("shipper","admin"), async (req, res) => {
+  try {
+    const lat = Number(req.body?.lat), lng = Number(req.body?.lng);
+    const deliveryId = req.body?.delivery_id ? String(req.body.delivery_id) : null;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: "invalid_lat_lng" });
+    }
+
+    let target = deliveryId
+      ? await dbGet(`SELECT id FROM deliveries WHERE id=?`, [deliveryId])
+      : await dbGet(
+          `SELECT id FROM deliveries WHERE shipper_id=? AND status IN ('assigned','picking') ORDER BY updated_at DESC LIMIT 1`,
+          [req.user.id]
+        );
+
+    if (!target) return res.status(404).json({ error: "no_active_delivery" });
+
+    await dbRun(
+      `UPDATE deliveries
+         SET current_lat=?, current_lng=?, updated_at=${NOW_SQL}
+       WHERE id=?`,
+      [lat, lng, target.id]
+    );
+
+    res.json({ ok: true, delivery_id: target.id, lat, lng });
+  } catch (e) {
+    res.status(500).json({ error: e.message || "server_error" });
+  }
+});
+
+/* ======================================================================
+   POST /api/shipper/deliveries/:id/proofs  (nhiều ảnh)
+   ALIAS: POST /api/shipper/deliveries/:id/proof  (một ảnh, field "file")
+====================================================================== */
+async function handleUploadProofs(req, res) {
+  const id = String(req.params.id);
+  const dv = await dbGet(`SELECT id, shipper_id, proof_images FROM deliveries WHERE id=?`, [id]);
+  if (!dv) return res.status(404).json({ error: "not_found" });
+  const isAdmin = String(req.user.role).toLowerCase() === "admin";
+  if (!isAdmin && dv.shipper_id !== req.user.id) return res.status(403).json({ error: "forbidden" });
+
+  const urls = [];
+  for (const f of (req.files || [])) {
+    const rel = `/uploads/proofs/${path.basename(f.path)}`.replace(/\\/g, "/");
+    urls.push(rel);
+  }
+
+  const next = JSON.stringify([...safeArr(dv.proof_images), ...urls]);
+  await dbRun(`UPDATE deliveries SET proof_images=?, updated_at=${NOW_SQL} WHERE id=?`, [next, id]);
+
+  res.json({ ok: true, urls });
+}
+router.post("/deliveries/:id/proofs", authRequired, ensureRole("shipper","admin"), upload.array("files", 6), async (req, res) => {
+  try { await handleUploadProofs(req, res); } catch (e) { res.status(500).json({ error: e.message || "server_error" }); }
+});
+router.post("/deliveries/:id/proof", authRequired, ensureRole("shipper","admin"), upload.single("file"), async (req, res) => {
+  try { req.files = req.file ? [req.file] : []; await handleUploadProofs(req, res); }
+  catch (e) { res.status(500).json({ error: e.message || "server_error" }); }
+});
+
+export default router;

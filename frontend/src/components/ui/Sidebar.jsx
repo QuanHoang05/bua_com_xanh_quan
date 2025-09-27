@@ -11,10 +11,7 @@ const navs = [
   { to: "/campaigns", icon: Target,    label: "Chiến dịch",  color: "text-sky-400" },
   { to: "/donors",    icon: Heart,     label: "Nhà hảo tâm", color: "text-rose-400" },
   { to: "/recipients",icon: Users,     label: "Người nhận",  color: "text-indigo-400" },
-  { to: "/shippers",  icon: Truck,     label: "Shipper TNV", color: "text-amber-400" },
-  { to: "/donate",    icon: HandHeart, label: "Quyên góp",   color: "text-fuchsia-400" },
-  { to: "/delivery",  icon: Package,   label: "Giao nhận",   color: "text-cyan-400" },
-  { to: "/reports",   icon: BarChart3, label: "Báo cáo",     color: "text-teal-400" },
+  { to: "/delivery",  icon: Package,   label: "Giao nhận",   color: "text-cyan-400" },  { to: "/reports",   icon: BarChart3, label: "Báo cáo",     color: "text-teal-400" },
   { to: "/settings",  icon: Settings,  label: "Cài đặt",     color: "text-slate-300" },
 ];
 

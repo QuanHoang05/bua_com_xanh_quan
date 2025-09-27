@@ -14,7 +14,7 @@
     "@react-google-maps/api": "^2.20.7",
     "bcryptjs": "^3.0.2",
     "clsx": "^2.1.1",
-    "framer-motion": "^12.23.12",
+    "framer-motion": "^12.23.14",
     "jsonwebtoken": "^9.0.2",
     "lucide-react": "^0.542.0",
     "nodemailer": "^7.0.6",

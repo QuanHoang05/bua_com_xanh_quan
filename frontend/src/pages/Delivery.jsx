@@ -1,629 +1,712 @@
-// src/pages/Delivery.jsx
-import { useEffect, useMemo, useRef, useState } from "react";
-import { apiGet, apiPost, apiPatch } from "../lib/api";
+// frontend/src/pages/Delivery.jsx
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
+import { apiGet, apiPatch } from "../lib/api";
 import {
-  Truck, MapPin, ClipboardList, Send, Loader2, XCircle, CheckCircle2,
-  Clock3, Navigation, PackageOpen, RefreshCcw, PencilLine, Filter,
-  Search, ChevronLeft, ChevronRight, PauseCircle, PlayCircle
+  Truck, Bike, Clock3, CheckCircle2, XCircle,
+  MapPin, Phone, RefreshCcw, ShieldCheck, AlertTriangle,
+  ClipboardList, MessageSquare, Loader2, UserCheck,
+  Copy, ExternalLink, CalendarClock, Package, Navigation
 } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
-/* ================= UI primitives ================= */
-const Card = ({ children, className = "" }) => (
-  <div className={`rounded-2xl border border-slate-200 bg-white shadow-[0_1px_0_#e5e7eb,0_10px_28px_rgba(0,0,0,0.06)] ${className}`}>
-    {children}
-  </div>
-);
+/* ======================= API ======================= */
+const API_LIST_MINE = (params = "") => `/api/deliveries?mine=1${params ? `&${params}` : ""}`;
+const API_PATCH_STATE = (id) => `/api/deliveries/${id}/status`;
+const API_REVIEW = (id) => `/api/deliveries/${id}/review`;
+const API_REPORT = (id) => `/api/deliveries/${id}/report`;
+const API_LIST_REPORTS_FOR_DELIVERY = (id, params = "") =>
+  `/api/deliveries/${id}/reports?mine=1${params ? `&${params}` : ""}`;
 
-const Pill = ({ children, className = "" }) => (
-  <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${className}`}>
-    {children}
-  </span>
-);
-
-const Input = (props) => (
-  <input
-    {...props}
-    className={[
-      "w-full rounded-xl border px-4 py-2.5 text-slate-900 placeholder-slate-400",
-      "focus:outline-none focus:ring-2 focus:ring-emerald-300",
-      props.className || "",
-    ].join(" ")}
-  />
-);
-
-const statusStyle = {
-  pending:  "bg-amber-50 text-amber-700 ring-1 ring-amber-200",
-  accepted: "bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200",
-  rejected: "bg-rose-50 text-rose-700 ring-1 ring-rose-200",
-  cancelled:"bg-slate-100 text-slate-700 ring-1 ring-slate-200",
-  completed:"bg-sky-50 text-sky-700 ring-1 ring-sky-200",
-  expired:  "bg-slate-100 text-slate-700 ring-1 ring-slate-200",
+/* ======================= UI META ======================= */
+const STATUS_META = {
+  pending:   { text: "Chờ tài xế",        icon: Clock3,       step: 1, bar: "bg-amber-500",   textColor: "text-amber-700",   chip: "bg-amber-50 text-amber-700 border-amber-200" },
+  assigned:  { text: "Đã nhận đơn",       icon: Bike,         step: 2, bar: "bg-sky-500",     textColor: "text-sky-700",     chip: "bg-sky-50 text-sky-700 border-sky-200" },
+  picking:   { text: "Đang lấy / giao",   icon: Truck,        step: 3, bar: "bg-cyan-500",    textColor: "text-cyan-700",    chip: "bg-cyan-50 text-cyan-700 border-cyan-200" },
+  delivered: { text: "Hoàn thành",        icon: CheckCircle2, step: 4, bar: "bg-emerald-600", textColor: "text-emerald-700", chip: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  cancelled: { text: "Đã hủy",            icon: XCircle,      step: 0, bar: "bg-rose-500",    textColor: "text-rose-700",    chip: "bg-rose-50 text-rose-700 border-rose-200" },
 };
-const statusDict = {
-  pending: "Chờ duyệt", accepted: "Đã nhận", rejected: "Từ chối",
-  cancelled: "Đã hủy", completed: "Hoàn tất", expired: "Hết hạn",
-};
-const StatusBadge = ({ status }) => (
-  <Pill className={statusStyle[status] || statusStyle.cancelled}>
-    {status === "accepted" || status === "completed" ? <CheckCircle2 className="h-3.5 w-3.5" /> :
-     status === "pending" ? <Clock3 className="h-3.5 w-3.5" /> :
-     <XCircle className="h-3.5 w-3.5" />}
-    {statusDict[status] || status}
-  </Pill>
-);
+const ORDERED_STEPS = ["pending", "assigned", "picking", "delivered"];
 
-/* Progress stepper (Grab-like) */
-const STEPS = ["pending","accepted","completed"];
-const Stepper = ({ status }) => {
-  const getIdx = (s) => {
-    if (s === "rejected" || s === "cancelled" || s === "expired") return -1;
-    return Math.max(0, STEPS.indexOf(s));
-  };
-  const idx = getIdx(status);
+const REASON_LABELS = {
+  late: "Giao muộn",
+  missing: "Thiếu hàng",
+  attitude: "Thái độ không tốt",
+  damage: "Hàng hoá hư hỏng",
+  other: "Khác",
+};
+const STATUS_BADGE = (status) => {
+  switch ((status || "").toLowerCase()) {
+    case "open": case "new": return { text: "Chờ xử lý", cls: "bg-amber-100 text-amber-700 border-amber-200" };
+    case "reviewing":
+    case "in_progress":      return { text: "Đang xử lý", cls: "bg-sky-100 text-sky-700 border-sky-200" };
+    case "resolved":         return { text: "Đã xử lý",   cls: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+    case "rejected":
+    case "closed":           return { text: "Đã đóng",    cls: "bg-slate-100 text-slate-700 border-slate-200" };
+    default:                 return { text: status || "Không rõ", cls: "bg-slate-100 text-slate-700 border-slate-200" };
+  }
+};
+
+/* ======================= small utils ======================= */
+const VND = (n) => (Number(n || 0)).toLocaleString("vi-VN") + "đ";
+const fmtDT = (v) => (v ? new Date(v).toLocaleString("vi-VN") : "—");
+const fmtTime = (v) => (v ? new Date(v).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : "");
+const openMaps = ({ addr, lat, lng }) => {
+  const q = lat && lng ? `${lat},${lng}` : encodeURIComponent(addr || "");
+  window.open(`https://www.google.com/maps/search/?api=1&query=${q}`, "_blank", "noopener,noreferrer");
+};
+const copy = async (text, toast = true) => {
+  try { await navigator.clipboard.writeText(text || ""); toast && alert("Đã copy ✓"); }
+  catch { toast && alert("Copy thất bại"); }
+};
+
+/* ======================= Stepper ======================= */
+function Stepper({ status }) {
+  const current = STATUS_META[status]?.step ?? 0;
   return (
-    <div className="flex items-center gap-2">
-      {STEPS.map((s, i) => {
-        const active = idx >= i;
+    <div className="flex flex-wrap items-center gap-2">
+      {ORDERED_STEPS.map((s, i) => {
+        const meta = STATUS_META[s];
+        const active = i + 1 <= current;
         return (
           <div key={s} className="flex items-center gap-2">
-            <div className={`h-2.5 w-2.5 rounded-full ${active ? "bg-emerald-600" : "bg-slate-300"}`} />
-            {i < STEPS.length - 1 && (
-              <div className={`h-[2px] w-8 ${idx > i ? "bg-emerald-600" : "bg-slate-300"}`} />
+            <div className={`h-2.5 w-2.5 rounded-full ${active ? meta.bar : "bg-slate-300"}`} />
+            <span className={`text-xs ${active ? "text-slate-800 font-medium" : "text-slate-400"}`}>{meta.text}</span>
+            {i < ORDERED_STEPS.length - 1 && (
+              <div className={`w-10 h-0.5 rounded ${i + 1 < current ? "bg-emerald-500" : "bg-slate-200"}`} />
             )}
           </div>
         );
       })}
-      {idx < 0 && <span className="text-xs text-rose-600 font-medium">Đã dừng</span>}
     </div>
   );
-};
+}
 
-/* ================= Helpers ================= */
-const toVNDateTime = (ts) => new Date(ts || Date.now()).toLocaleString("vi-VN");
+/* ======================= Main Page ======================= */
+export default function DeliveryPage() {
+  const [items, setItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [modal, setModal] = useState(null); // { id, mode: 'review'|'report'|'reports' }
+  const [submitting, setSubmitting] = useState(false);
+  const [filter, setFilter] = useState("all"); // all | pending | assigned | picking | delivered | cancelled
+  const timerRef = useRef(null);
 
-/* ================= Page ================= */
-export default function Delivery() {
-  // Form tạo booking
-  const [qty, setQty] = useState(1);
-  const [method, setMethod] = useState("pickup"); // 'pickup' | 'meet' | 'delivery'
-  const [pickupId, setPickupId] = useState("");
-  const [note, setNote] = useState("");
-  const [creating, setCreating] = useState(false);
-
-  // Dữ liệu
-  const [pickupPoints, setPickupPoints] = useState(null);
-  const [bookings, setBookings] = useState(null);
-
-  // Lọc & trang
-  const [q, setQ] = useState("");
-  const [statusFilter, setStatusFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const pageSize = 10;
-  const [total, setTotal] = useState(0);
-
-  // Inline edit
-  const [editingId, setEditingId] = useState(null);
-  const [editQty, setEditQty] = useState(1);
-  const [editMethod, setEditMethod] = useState("pickup");
-  const [editPickupId, setEditPickupId] = useState("");
-  const [editNote, setEditNote] = useState("");
-  const [savingEdit, setSavingEdit] = useState(false);
-
-  // Auto refresh
-  const [autoRefresh, setAutoRefresh] = useState(true);
-  const refreshRef = useRef(null);
-
-  /* ---------- Loaders ---------- */
-  async function loadPickupPoints() {
+  const load = useCallback(async () => {
     try {
-      const r = await apiGet("/api/donor/pickup-points");
-      setPickupPoints(r?.items || []);
-    } catch {
-      const s = await apiGet("/api/site-settings?key=pickup_points").catch(() => null);
-      const arr = Array.isArray(s?.value) ? s.value : [];
-      setPickupPoints(arr);
+      setLoading(true);
+      const res = await apiGet(API_LIST_MINE());
+      const list = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+      setItems(list);
+      setErr("");
+    } catch (e) {
+      setErr(e?.message || "Không tải được dữ liệu");
+    } finally {
+      setLoading(false);
     }
-  }
+  }, []);
 
-  async function loadBookings(opts = {}) {
-    const { toPage = page } = opts;
-    try {
-      const sp = new URLSearchParams();
-      sp.set("page", String(toPage));
-      sp.set("pageSize", String(pageSize));
-      if (statusFilter) sp.set("status", statusFilter);
-      if (q.trim()) sp.set("q", q.trim());
-
-      // Backend trả {items, total} hoặc raw array
-      const r = await apiGet(`/api/bookings?${sp.toString()}`);
-      if (Array.isArray(r)) {
-        setBookings(r);
-        setTotal(r.length < pageSize ? r.length : toPage * pageSize + 1); // guessy
-      } else {
-        setBookings(r?.items || []);
-        setTotal(r?.total || 0);
-      }
-      setPage(toPage);
-    } catch {
-      setBookings([]);
-      setTotal(0);
-    }
-  }
-
-  useEffect(() => { loadPickupPoints(); }, []);
-  useEffect(() => { loadBookings({ toPage: 1 }); /* reset về trang 1 khi đổi filter */ }, [statusFilter]);
-
-  // Auto refresh mỗi 15s
+  useEffect(() => { load(); }, [load]);
   useEffect(() => {
-    if (!autoRefresh) {
-      if (refreshRef.current) clearInterval(refreshRef.current);
-      return;
-    }
-    refreshRef.current = setInterval(() => loadBookings({ toPage: page }), 15000);
-    return () => refreshRef.current && clearInterval(refreshRef.current);
-  }, [autoRefresh, page, q, statusFilter]); // ràng buộc
+    timerRef.current = setInterval(load, 10000); // refresh 10s
+    return () => clearInterval(timerRef.current);
+  }, [load]);
 
-  /* ---------- Actions ---------- */
-  async function createBooking(e) {
-    e.preventDefault();
-    setCreating(true);
+  const patchStatus = async (id, action) => {
     try {
-      const payload = {
-        qty: Number(qty || 0),
-        method,
-        pickup_point: method === "pickup" ? (pickupId || null) : null,
-        note: note || null,
-      };
-      await apiPost("/api/bookings", payload);
-      setQty(1); setMethod("pickup"); setPickupId(""); setNote("");
-      await loadBookings({ toPage: 1 });
+      await apiPatch(API_PATCH_STATE(id), { action });
+      await load();
+    } catch (e) {
+      alert(e?.message || "Cập nhật thất bại");
+    }
+  };
+
+  const handleAction = (id, action) => {
+    if (action === "open_review")  return setModal({ id, mode: "review" });
+    if (action === "open_report")  return setModal({ id, mode: "report" });
+    if (action === "open_reports") return setModal({ id, mode: "reports" });
+    patchStatus(id, action);
+  };
+
+  const submitReview = async ({ rating, comment }) => {
+    if (!modal?.id) return;
+    setSubmitting(true);
+    try {
+      await apiPatch(API_REVIEW(modal.id), { rating, comment });
+      setModal(null);
+      alert("Đã gửi đánh giá. Cảm ơn bạn!");
+      await load();
+    } catch (e) {
+      alert(e?.message || "Không gửi được đánh giá");
     } finally {
-      setCreating(false);
+      setSubmitting(false);
     }
-  }
+  };
 
-  async function cancelBooking(b) {
+  const submitReport = async ({ reason, details }) => {
+    if (!modal?.id) return;
+    setSubmitting(true);
     try {
-      await apiPatch(`/api/bookings/${b.id}`, { status: "cancelled" });
-    } catch {
-      await apiPost(`/api/bookings/${b.id}/cancel`, {});
-    }
-    await loadBookings({ toPage: page });
-  }
-
-  function startEdit(b) {
-    setEditingId(b.id);
-    setEditQty(b.qty || 1);
-    setEditMethod(b.method || "pickup");
-    setEditPickupId(b.pickup_point || "");
-    setEditNote(b.note || "");
-  }
-  function stopEdit() {
-    setEditingId(null);
-    setSavingEdit(false);
-  }
-  async function saveEdit() {
-    if (!editingId) return;
-    setSavingEdit(true);
-    try {
-      const body = {
-        qty: Number(editQty || 1),
-        method: editMethod,
-        pickup_point: editMethod === "pickup" ? (editPickupId || null) : null,
-        note: editNote || null,
-      };
-      await apiPatch(`/api/bookings/${editingId}`, body);
-      stopEdit();
-      await loadBookings({ toPage: page });
+      await apiPatch(API_REPORT(modal.id), { reason, details });
+      setModal(null);
+      alert("Đã gửi báo cáo. Chúng tôi sẽ xử lý!");
+    } catch (e) {
+      alert(e?.message || "Không gửi được báo cáo");
     } finally {
-      setSavingEdit(false);
+      setSubmitting(false);
     }
-  }
+  };
 
-  /* ---------- Derived ---------- */
-  const visibleBookings = useMemo(() => {
-    const arr = Array.isArray(bookings) ? bookings : [];
-    const kw = q.trim().toLowerCase();
-    if (!kw) return arr;
-    return arr.filter(b =>
-      (b.note || "").toLowerCase().includes(kw) ||
-      (b.status || "").toLowerCase().includes(kw) ||
-      String(b.qty || "").includes(kw)
-    );
-  }, [bookings, q]);
+  const filtered = useMemo(() => {
+    if (filter === "all") return items;
+    return items.filter((d) => d.status === filter);
+  }, [items, filter]);
 
-  const canPrev = page > 1;
-  const canNext = page * pageSize < total;
-
-  /* ================= Render ================= */
   return (
-    <div className="max-w-6xl mx-auto px-6 py-6">
-      {/* Hero */}
-      <div className="rounded-3xl p-5 mb-6 bg-gradient-to-r from-emerald-500 via-sky-500 to-violet-500 text-white shadow-[0_10px_30px_rgba(0,0,0,0.15)]">
-        <div className="flex flex-wrap items-center gap-3">
-          <Truck className="h-8 w-8" />
-          <h1 className="text-3xl font-extrabold tracking-tight">Đặt — Nhận</h1>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => loadBookings({ toPage: page })}
-              className="inline-flex items-center gap-2 rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-1.5 text-sm"
-              title="Làm mới"
-            >
-              <RefreshCcw className="h-4 w-4" /> Làm mới
-            </button>
-
-            <button
-              onClick={() => setAutoRefresh(v => !v)}
-              className="inline-flex items-center gap-2 rounded-2xl bg-white/10 hover:bg-white/20 px-3 py-1.5 text-sm"
-              title={autoRefresh ? "Tắt tự làm mới" : "Bật tự làm mới"}
-            >
-              {autoRefresh ? <PauseCircle className="h-4 w-4" /> : <PlayCircle className="h-4 w-4" />}
-              {autoRefresh ? "Đang tự làm mới" : "Tự làm mới"}
-            </button>
+    <div className="mx-auto max-w-6xl p-4 space-y-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-200 to-teal-200">
+            <Truck className="h-6 w-6 text-emerald-700" />
+          </div>
+        <div>
+            <h1 className="text-xl font-bold text-slate-900">Đơn giao của tôi</h1>
+            <p className="text-xs text-slate-600">Track realtime, đến lấy hàng chuẩn, rating & report nhanh gọn.</p>
           </div>
         </div>
-        <p className="mt-1 text-white/90">Tạo yêu cầu nhận cơm và theo dõi trạng thái xử lý theo thời gian thực.</p>
+        <div className="flex items-center gap-2">
+          <div className="hidden sm:flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1">
+            {["all","pending","assigned","picking","delivered","cancelled"].map(s => {
+              const meta = STATUS_META[s] || {};
+              const active = filter === s;
+              return (
+                <button
+                  key={s}
+                  onClick={() => setFilter(s)}
+                  className={`px-2.5 py-1 rounded-lg text-sm border ${active ? (meta.chip || "bg-slate-800 text-white border-slate-800") : "border-transparent text-slate-700 hover:bg-slate-50"}`}
+                  title={s === "all" ? "Tất cả" : meta.text}
+                >
+                  {s === "all" ? "Tất cả" : meta.text}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            onClick={load}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            title="Tải lại"
+          >
+            <RefreshCcw className="h-4 w-4" /> Tải lại
+          </button>
+        </div>
       </div>
 
-      <div className="grid lg:grid-cols-[minmax(340px,1fr)_minmax(420px,1.2fr)] gap-6">
-        {/* Left: Tạo đơn */}
-        <div className="space-y-4">
-          <Card>
-            <form onSubmit={createBooking} className="p-5 space-y-4">
-              <div className="flex items-center gap-2 text-slate-900">
-                <ClipboardList className="h-5 w-5 text-emerald-700" />
-                <div className="font-semibold">Tạo yêu cầu nhận đồ ăn</div>
-              </div>
+      {/* States */}
+      {err && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-rose-700">{err}</div>
+      )}
 
-              <div className="grid md:grid-cols-2 gap-3">
-                <label className="grid gap-1">
-                  <span className="text-sm font-medium text-slate-800">Số suất</span>
-                  <Input type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} />
-                </label>
-
-                <label className="grid gap-1">
-                  <span className="text-sm font-medium text-slate-800">Hình thức</span>
-                  <div className="flex rounded-xl border overflow-hidden">
-                    {["pickup","meet","delivery"].map(m => (
-                      <button
-                        type="button"
-                        key={m}
-                        onClick={() => setMethod(m)}
-                        className={[
-                          "flex-1 py-2.5 text-sm font-semibold transition-colors",
-                          method === m ? "bg-emerald-600 text-white" : "bg-white hover:bg-slate-50"
-                        ].join(" ")}
-                      >
-                        {m === "pickup" ? "Tự đến điểm" : m === "meet" ? "Hẹn gặp" : "Giao tận nơi"}
-                      </button>
-                    ))}
-                  </div>
-                </label>
-              </div>
-
-              {method === "pickup" && (
-                <label className="grid gap-1">
-                  <span className="text-sm font-medium text-slate-800">Điểm giao nhận</span>
-                  {!pickupPoints ? (
-                    <div className="px-4 py-2.5 rounded-xl border text-slate-600">Đang tải điểm…</div>
-                  ) : pickupPoints.length === 0 ? (
-                    <div className="px-4 py-2.5 rounded-xl border text-slate-600">Chưa có điểm nào.</div>
-                  ) : (
-                    <div className="grid gap-2">
-                      <div className="flex items-center gap-2 px-3 py-2 rounded-xl border bg-white">
-                        <MapPin className="h-4 w-4 text-slate-500" />
-                        <select
-                          value={pickupId}
-                          onChange={(e) => setPickupId(e.target.value)}
-                          className="flex-1 outline-none bg-transparent"
-                        >
-                          <option value="">— Chọn điểm —</option>
-                          {pickupPoints.map(p => (
-                            <option key={p.id} value={p.id}>
-                              {p.name} — {p.address}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {pickupId && (
-                        <a
-                          href={(() => {
-                            const found = pickupPoints.find(p => String(p.id) === String(pickupId));
-                            if (!found) return "#";
-                            return found.lat && found.lng
-                              ? `https://www.google.com/maps/search/?api=1&query=${found.lat},${found.lng}`
-                              : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(found.address || found.name)}`;
-                          })()}
-                          target="_blank" rel="noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-sky-700 hover:underline"
-                        >
-                          <Navigation className="h-3.5 w-3.5" /> Mở bản đồ
-                        </a>
-                      )}
-                    </div>
-                  )}
-                </label>
-              )}
-
-              <label className="grid gap-1">
-                <span className="text-sm font-medium text-slate-800">Ghi chú</span>
-                <textarea
-                  rows={3}
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  className="w-full rounded-xl border px-4 py-2.5 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-300"
-                  placeholder="Ví dụ: nhà có người già, vui lòng gọi trước…"
-                />
-              </label>
-
-              <div className="text-right">
-                <button
-                  className="inline-flex items-center gap-2 rounded-2xl bg-emerald-600 text-white px-4 py-2.5 font-semibold hover:bg-emerald-700 focus:outline-none focus:ring-4 focus:ring-emerald-300 disabled:opacity-60"
-                  disabled={creating || (method === "pickup" && !pickupId)}
-                >
-                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Gửi yêu cầu
-                </button>
-              </div>
-            </form>
-          </Card>
-
-          {/* Bộ lọc (Grab-like toolbar) */}
-          <Card className="p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-2 rounded-2xl border px-3 py-1.5 bg-white">
-                <Search className="h-4 w-4 text-slate-500" />
-                <input
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && loadBookings({ toPage: 1 })}
-                  placeholder="Tìm theo ghi chú / trạng thái / số suất… (Enter)"
-                  className="outline-none"
-                />
-              </div>
-
-              <div className="flex items-center gap-2 rounded-2xl border px-3 py-1.5 bg-white">
-                <Filter className="h-4 w-4 text-slate-500" />
-                <select
-                  className="bg-transparent outline-none text-sm"
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="">Tất cả trạng thái</option>
-                  <option value="pending">Chờ duyệt</option>
-                  <option value="accepted">Đã nhận</option>
-                  <option value="rejected">Từ chối</option>
-                  <option value="cancelled">Đã hủy</option>
-                  <option value="completed">Hoàn tất</option>
-                  <option value="expired">Hết hạn</option>
-                </select>
-              </div>
-
-              <button
-                onClick={() => loadBookings({ toPage: 1 })}
-                className="inline-flex items-center gap-2 rounded-2xl border px-3 py-1.5 text-sm bg-white hover:bg-slate-50"
-              >
-                <RefreshCcw className="h-4 w-4" /> Áp dụng
-              </button>
-
-              {(q || statusFilter) && (
-                <button
-                  onClick={() => { setQ(""); setStatusFilter(""); loadBookings({ toPage: 1 }); }}
-                  className="ml-auto text-sm text-slate-600 hover:underline"
-                >
-                  Xóa bộ lọc
-                </button>
-              )}
-            </div>
-          </Card>
+      {loading ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-5">
+          <div className="h-4 w-40 animate-pulse rounded bg-slate-200" />
+          <div className="mt-3 h-4 w-60 animate-pulse rounded bg-slate-200" />
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            {[...Array(4)].map((_, i) => (
+              <div key={i} className="h-28 rounded-xl bg-slate-100 animate-pulse" />
+            ))}
+          </div>
         </div>
+      ) : !filtered?.length ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
+          <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-slate-100">
+            <Truck className="h-5 w-5 text-slate-500" />
+          </div>
+          <div className="font-medium text-slate-800">Không có đơn phù hợp bộ lọc.</div>
+          <div className="text-sm text-slate-500">Chuyển sang “Tất cả” để xem toàn bộ.</div>
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {filtered.map((d) => (
+            <DeliveryCard key={d.id} d={d} onAction={handleAction} />
+          ))}
+        </div>
+      )}
 
-        {/* Right: Danh sách đơn */}
-        <div className="space-y-4">
-          <Card className="p-4">
-            <div className="px-1 pb-3 flex items-center gap-2">
-              <ClipboardList className="h-5 w-5 text-emerald-700" />
-              <div className="font-semibold">Đơn của bạn</div>
-              <div className="ml-auto text-xs text-slate-500">{total} đơn</div>
+      {/* Modals */}
+      <AnimatePresence>
+        {modal?.mode === "review" && (
+          <ReviewModal
+            open
+            submitting={submitting}
+            onClose={() => setModal(null)}
+            onSubmit={submitReview}
+          />
+        )}
+        {modal?.mode === "report" && (
+          <ReportModal
+            open
+            submitting={submitting}
+            onClose={() => setModal(null)}
+            onSubmit={submitReport}
+          />
+        )}
+        {modal?.mode === "reports" && (
+          <ReportsViewer
+            open
+            deliveryId={modal.id}
+            onClose={() => setModal(null)}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+/* ======================= Card ======================= */
+function DeliveryCard({ d, onAction }) {
+  const meta = STATUS_META[d.status] || STATUS_META.pending;
+  const MetaIcon = meta.icon;
+
+  // derive pickup window
+  const winFrom = fmtTime(d.pickup_time_from);
+  const winTo   = fmtTime(d.pickup_time_to);
+  const hasPickupWin = winFrom || winTo;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="overflow-hidden rounded-2xl border border-slate-200 bg-white/90 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-white/80"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between border-b bg-gradient-to-r from-emerald-50 to-teal-50 px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-slate-700">#{d.id}</span>
+          <span className="text-slate-300">•</span>
+          <span className={`inline-flex items-center gap-1 text-sm font-semibold ${meta.textColor}`}>
+            <MetaIcon className="h-4 w-4" /> {meta.text}
+          </span>
+        </div>
+        <div className="text-[11px] text-slate-600 flex items-center gap-1">
+          <ShieldCheck className="h-3.5 w-3.5" />
+          Cập nhật: <span className="ml-1 font-medium text-slate-800">{fmtDT(d.updated_at)}</span>
+        </div>
+      </div>
+
+      {/* Nội dung */}
+      <div className="grid gap-4 p-4">
+        <Stepper status={d.status} />
+
+        {/* Pickup */}
+        <Section title="Điểm lấy hàng" icon={Navigation}>
+          <Info name={d.pickup_name} addr={d.pickup_address} phone={d.pickup_phone} />
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            <Chip icon={CalendarClock} label="Khung giờ" value={hasPickupWin ? `${winFrom || "?"} – ${winTo || "?"}` : "Không đặt trước"} />
+            {d.pickup_note && <Chip icon={MessageSquare} label="Ghi chú" value={d.pickup_note} />}
+            {Number.isFinite(Number(d.qty)) && (
+              <Chip icon={Package} label="Số lượng" value={`${d.qty} ${d.unit || "suất"}`} />
+            )}
+            {d.eta_time && <Chip icon={Clock3} label="ETA dự kiến" value={fmtDT(d.eta_time)} />}
+          </div>
+
+          <div className="mt-2 flex flex-wrap gap-2">
+            {d.pickup_address && (
+              <>
+                <ActionBtn onClick={() => copy(d.pickup_address)} icon={Copy} text="Copy địa chỉ" />
+                <ActionBtn onClick={() => openMaps({ addr: d.pickup_address, lat: d.pickup_lat, lng: d.pickup_lng })} icon={ExternalLink} text="Mở Google Maps" />
+              </>
+            )}
+            {d.pickup_phone && <ActionLink href={`tel:${d.pickup_phone}`} icon={Phone} text="Gọi điểm lấy" />}
+          </div>
+        </Section>
+
+        {/* Dropoff */}
+        <Section title="Người nhận" icon={UserCheck}>
+          <Info name={d.dropoff_name} addr={d.dropoff_address} phone={d.dropoff_phone} />
+          <div className="mt-2 flex flex-wrap gap-2">
+            {d.dropoff_address && (
+              <>
+                <ActionBtn onClick={() => copy(d.dropoff_address)} icon={Copy} text="Copy địa chỉ" />
+                <ActionBtn onClick={() => openMaps({ addr: d.dropoff_address })} icon={ExternalLink} text="Mở Google Maps" />
+              </>
+            )}
+            {d.dropoff_phone && <ActionLink href={`tel:${d.dropoff_phone}`} icon={Phone} text="Gọi người nhận" />}
+          </div>
+        </Section>
+
+        {/* Shipper */}
+        {d.shipper_name && (
+          <Section title="Shipper phụ trách" icon={Bike}>
+            <Info name={d.shipper_name} phone={d.shipper_phone} />
+            {d.shipper_phone && <div className="mt-2"><ActionLink href={`tel:${d.shipper_phone}`} icon={Phone} text="Gọi shipper" /></div>}
+          </Section>
+        )}
+      </div>
+
+      {/* Hành động */}
+      <div className="flex flex-wrap items-center gap-2 border-t px-4 py-3 text-sm">
+        {d.status === "pending" && (
+          <PrimaryBtn onClick={() => onAction(d.id, "accept")} text="Xác nhận nhận đơn" />
+        )}
+        {d.status === "assigned" && (
+          <PrimaryBtn tone="sky" onClick={() => onAction(d.id, "start_pickup")} text="Bắt đầu lấy hàng" />
+        )}
+        {d.status === "picking" && (
+          <PrimaryBtn
+            onClick={() => onAction(d.id, "delivered")}
+            icon={CheckCircle2}
+            text="Xác nhận giao thành công"
+          />
+        )}
+        {!["delivered", "cancelled"].includes(d.status) && (
+          <DangerBtn onClick={() => onAction(d.id, "cancel")} icon={XCircle} text="Hủy đơn" />
+        )}
+
+        {/* Đánh giá/Báo cáo khi đã hoàn tất hoặc hủy */}
+        {["delivered", "cancelled"].includes(d.status) && (
+          <>
+            <PrimaryBtn tone="sky" onClick={() => onAction(d.id, "open_review")} text="Đánh giá shipper" />
+            <WarnBtn onClick={() => onAction(d.id, "open_report")} icon={AlertTriangle} text="Báo cáo sự cố" />
+          </>
+        )}
+
+        {/* Xem báo cáo đã gửi */}
+        <SecondaryBtn onClick={() => onAction(d.id, "open_reports")} icon={ClipboardList} text="Xem báo cáo đã gửi" />
+      </div>
+    </motion.div>
+  );
+}
+
+/* ======================= Blocks & Buttons ======================= */
+function Section({ title, icon: Icon, children }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white/70 p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon className="h-4 w-4 text-emerald-600" />
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function Chip({ icon: Icon, label, value }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+      <Icon className="h-4 w-4 text-slate-600" />
+      <div className="text-xs text-slate-500">{label}</div>
+      <div className="text-sm font-medium text-slate-800">{value || "—"}</div>
+    </div>
+  );
+}
+
+function ActionBtn({ onClick, icon: Icon, text }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-800 hover:bg-slate-50"
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </button>
+  );
+}
+function ActionLink({ href, icon: Icon, text }) {
+  return (
+    <a
+      href={href}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-800 hover:bg-slate-50"
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </a>
+  );
+}
+function PrimaryBtn({ onClick, text, icon: Icon, tone = "emerald" }) {
+  const toneMap = {
+    emerald: "bg-emerald-600 hover:bg-emerald-700",
+    sky: "bg-sky-600 hover:bg-sky-700",
+  };
+  return (
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 font-semibold text-white ${toneMap[tone]}`}
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </button>
+  );
+}
+function SecondaryBtn({ onClick, text, icon: Icon }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-800 hover:bg-slate-50"
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </button>
+  );
+}
+function WarnBtn({ onClick, text, icon: Icon }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 font-semibold text-white hover:bg-amber-600"
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </button>
+  );
+}
+function DangerBtn({ onClick, text, icon: Icon }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 font-semibold text-white hover:bg-rose-700"
+    >
+      {Icon && <Icon className="h-4 w-4" />} {text}
+    </button>
+  );
+}
+
+/* ======================= Info block ======================= */
+function Info({ name, addr, phone }) {
+  return (
+    <div className="space-y-1">
+      <div className="font-medium text-slate-900">{name || "—"}</div>
+      {addr && (
+        <div className="inline-flex items-start gap-2 text-slate-700">
+          <MapPin className="mt-0.5 h-4 w-4 text-slate-500" />
+          <span>{addr}</span>
+        </div>
+      )}
+      {phone && (
+        <a href={`tel:${phone}`} className="inline-flex items-center gap-1 text-emerald-700 hover:underline" title="Gọi">
+          <Phone className="h-4 w-4" /> {phone}
+        </a>
+      )}
+    </div>
+  );
+}
+
+/* ======================= Review Modal ======================= */
+function ReviewModal({ open, submitting, onClose, onSubmit }) {
+  const [rating, setRating] = useState(5);
+  const [comment, setComment] = useState("");
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+        >
+          <motion.div
+            initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <h2 className="mb-3 text-lg font-semibold text-slate-900">Đánh giá shipper</h2>
+
+            <div className="mb-3 flex gap-1">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <button key={s} type="button" onClick={() => setRating(s)} aria-label={`Chọn ${s} sao`}>
+                  <span className={s <= rating ? "text-amber-500 text-2xl" : "text-slate-300 text-2xl"}>★</span>
+                </button>
+              ))}
             </div>
 
-            {!bookings ? (
-              <div className="p-4 animate-pulse">
-                <div className="h-4 bg-slate-200 rounded w-1/2 mb-2" />
-                <div className="h-3 bg-slate-200 rounded w-1/3" />
+            <textarea
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+              placeholder="Nhận xét của bạn…"
+              className="mb-4 h-28 w-full resize-none rounded-lg border border-slate-300 p-2 text-sm outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-100"
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+              >
+                Hủy
+              </button>
+              <button
+                disabled={submitting}
+                onClick={() => onSubmit({ rating, comment })}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+              >
+                {submitting ? "Đang gửi…" : "Gửi đánh giá"}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ======================= Report Modal ======================= */
+function ReportModal({ open, submitting, onClose, onSubmit }) {
+  const [reason, setReason] = useState("late");
+  const [details, setDetails] = useState("");
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4"
+        >
+          <motion.div
+            initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+          >
+            <h2 className="mb-3 text-lg font-semibold text-slate-900">Báo cáo sự cố</h2>
+
+            <label className="mb-2 block text-sm font-medium text-slate-700">Lý do</label>
+            <select
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="mb-3 w-full rounded-lg border border-slate-300 p-2 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100 text-slate-900 [&>option]:text-slate-900"
+            >
+              <option value="late">Giao muộn</option>
+              <option value="missing">Thiếu hàng</option>
+              <option value="attitude">Thái độ không tốt</option>
+              <option value="damage">Hàng hoá hư hỏng</option>
+              <option value="other">Khác</option>
+            </select>
+            <textarea
+              value={details}
+              onChange={(e) => setDetails(e.target.value)}
+              placeholder="Mô tả chi tiết sự cố…"
+              className="mb-4 h-28 w-full resize-none rounded-lg border border-slate-300 p-2 text-sm outline-none focus:border-amber-500 focus:ring-4 focus:ring-amber-100"
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+              >
+                Hủy
+              </button>
+              <button
+                disabled={submitting}
+                onClick={() => onSubmit({ reason, details })}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-600 disabled:opacity-60"
+              >
+                <AlertTriangle className="h-4 w-4" />
+                {submitting ? "Đang gửi…" : "Gửi báo cáo"}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/* ======================= Reports Viewer ======================= */
+function ReportsViewer({ open, deliveryId, onClose }) {
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState("");
+  const [items, setItems] = useState([]);
+
+  const load = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await apiGet(API_LIST_REPORTS_FOR_DELIVERY(deliveryId));
+      const list = Array.isArray(res?.items) ? res.items : (Array.isArray(res) ? res : []);
+      setItems(list);
+      setErr("");
+    } catch (e) {
+      setErr(e?.message || "Không tải được danh sách báo cáo");
+    } finally {
+      setLoading(false);
+    }
+  }, [deliveryId]);
+
+  useEffect(() => { if (open) load(); }, [open, load]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/50 p-4"
+        >
+          <motion.div
+            initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 24, opacity: 0 }}
+            className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
+          >
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ClipboardList className="h-5 w-5 text-emerald-600" />
+                <h2 className="text-lg font-semibold text-slate-900">Báo cáo đã gửi — Đơn #{deliveryId}</h2>
               </div>
-            ) : (visibleBookings.length === 0 ? (
-              <div className="p-8 text-center text-slate-600">Chưa có yêu cầu nào.</div>
+              <button
+                onClick={onClose}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+              >
+                Đóng
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white p-4">
+                <Loader2 className="h-4 w-4 animate-spin text-slate-500" />
+                <span className="text-sm text-slate-600">Đang tải…</span>
+              </div>
+            ) : err ? (
+              <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-rose-700">{err}</div>
+            ) : items.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center text-slate-600">
+                Chưa có báo cáo nào cho đơn này.
+              </div>
             ) : (
-              <>
-                <div className="grid gap-3">
-                  {visibleBookings.map(b => {
-                    const isEditing = editingId === b.id;
-                    const showMapLink =
-                      !isEditing && b.method === "pickup" && b.pickup_point &&
-                      (pickupPoints || []).some(p => String(p.id) === String(b.pickup_point));
-                    const point = showMapLink
-                      ? (pickupPoints || []).find(p => String(p.id) === String(b.pickup_point))
-                      : null;
+              <div className="space-y-3 max-h-[65vh] overflow-auto pr-1">
+                {items.map((r) => {
+                  const statusMeta = STATUS_BADGE(r.status);
+                  const reasonText = REASON_LABELS[r.reason] || r.reason || "—";
+                  const adminReply = r.admin_reply ?? r.response ?? r.reply ?? r.admin_response ?? r.admin_message ?? "";
+                  const handler = r.handled_by_name ?? r.admin_name ?? "";
+                  return (
+                    <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                      <div className="mb-2 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <MessageSquare className="h-4 w-4 text-slate-600" />
+                          <div className="font-medium text-slate-900">#{r.id}</div>
+                          <span className="text-slate-400">•</span>
+                          <div className="text-sm text-slate-700">Lý do: <span className="font-medium">{reasonText}</span></div>
+                        </div>
+                        <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${statusMeta.cls}`}>
+                          {statusMeta.text}
+                        </span>
+                      </div>
 
-                    return (
-                      <div key={b.id} className="p-3 rounded-2xl border bg-white hover:shadow-[0_1px_0_#e5e7eb,0_12px_28px_rgba(0,0,0,0.08)] transition-all">
-                        <div className="flex items-start gap-3">
-                          <div className="shrink-0 grid place-items-center h-12 w-12 rounded-xl bg-emerald-50 border border-emerald-200">
-                            <ClipboardList className="h-6 w-6 text-emerald-700" />
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div>
+                          <div className="text-xs font-semibold text-slate-600">Chi tiết mô tả</div>
+                          <div className="whitespace-pre-wrap text-sm text-slate-800">{r.details || "—"}</div>
+                        </div>
+
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <div className="mb-1 flex items-center gap-2 text-xs font-semibold text-slate-600">
+                            <UserCheck className="h-4 w-4 text-emerald-600" />
+                            Phản hồi từ admin
                           </div>
-
-                          <div className="flex-1 min-w-0">
-                            {/* Header line */}
-                            <div className="flex flex-wrap items-center gap-2">
-                              {isEditing ? (
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Input
-                                    type="number" min={1}
-                                    value={editQty}
-                                    onChange={(e)=>setEditQty(e.target.value)}
-                                    className="w-24"
-                                  />
-                                  <div className="flex rounded-xl border overflow-hidden">
-                                    {["pickup","meet","delivery"].map(m => (
-                                      <button
-                                        key={m} type="button"
-                                        onClick={() => setEditMethod(m)}
-                                        className={[
-                                          "px-3 py-1.5 text-xs font-semibold",
-                                          editMethod === m ? "bg-emerald-600 text-white" : "bg-white hover:bg-slate-50"
-                                        ].join(" ")}
-                                      >
-                                        {m}
-                                      </button>
-                                    ))}
-                                  </div>
-                                  {editMethod === "pickup" && (
-                                    <select
-                                      value={editPickupId}
-                                      onChange={(e)=>setEditPickupId(e.target.value)}
-                                      className="rounded-xl border px-3 py-1.5 text-xs"
-                                    >
-                                      <option value="">— Chọn điểm —</option>
-                                      {(pickupPoints||[]).map(p => (
-                                        <option key={p.id} value={p.id}>{p.name} — {p.address}</option>
-                                      ))}
-                                    </select>
-                                  )}
-                                </div>
-                              ) : (
-                                <div className="font-semibold text-slate-900">
-                                  Nhận {b.qty || 1} suất • {b.method === "pickup" ? "Tự đến điểm" : b.method === "meet" ? "Hẹn gặp" : "Giao tận nơi"}
-                                </div>
-                              )}
-                              <StatusBadge status={b.status} />
-                            </div>
-
-                            {/* Stepper */}
-                            <div className="mt-2">
-                              <Stepper status={b.status} />
-                            </div>
-
-                            {/* Note + time + map */}
-                            <div className="mt-2 space-y-1">
-                              {isEditing ? (
-                                <textarea
-                                  rows={2}
-                                  value={editNote}
-                                  onChange={(e)=>setEditNote(e.target.value)}
-                                  className="w-full rounded-xl border px-3 py-2 text-sm"
-                                  placeholder="Ghi chú…"
-                                />
-                              ) : (
-                                b.note && <div className="text-sm text-slate-600 line-clamp-2">{b.note}</div>
-                              )}
-
-                              <div className="text-xs text-slate-500">
-                                {toVNDateTime(b.created_at || b.updated_at)}
-                              </div>
-
-                              {showMapLink && point && (
-                                <a
-                                  href={point.lat && point.lng
-                                    ? `https://www.google.com/maps/search/?api=1&query=${point.lat},${point.lng}`
-                                    : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(point.address || point.name)}`}
-                                  target="_blank" rel="noreferrer"
-                                  className="inline-flex items-center gap-1 text-xs text-sky-700 hover:underline"
-                                >
-                                  <Navigation className="h-3.5 w-3.5" /> Bản đồ điểm nhận: {point.name}
-                                </a>
-                              )}
-                            </div>
+                          <div className="whitespace-pre-wrap text-sm text-slate-800">
+                            {adminReply ? adminReply : <span className="text-slate-500">Chưa có phản hồi</span>}
                           </div>
-
-                          {/* Actions */}
-                          <div className="flex flex-col gap-2">
-                            {!isEditing ? (
-                              <>
-                                {b.status === "pending" && (
-                                  <button
-                                    onClick={() => startEdit(b)}
-                                    className="px-3 py-1.5 rounded-2xl border text-sm hover:bg-slate-50 inline-flex items-center gap-1"
-                                    title="Sửa số suất / hình thức / ghi chú"
-                                  >
-                                    <PencilLine className="h-4 w-4" /> Sửa
-                                  </button>
-                                )}
-                                {b.status === "pending" && (
-                                  <button
-                                    onClick={() => cancelBooking(b)}
-                                    className="px-3 py-1.5 rounded-2xl border text-sm hover:bg-rose-50"
-                                  >
-                                    Hủy
-                                  </button>
-                                )}
-                              </>
-                            ) : (
-                              <div className="flex flex-col gap-2">
-                                <button
-                                  onClick={saveEdit}
-                                  disabled={savingEdit || (editMethod === "pickup" && !editPickupId)}
-                                  className="px-3 py-1.5 rounded-2xl bg-emerald-600 text-white text-sm hover:bg-emerald-700 disabled:opacity-60"
-                                >
-                                  {savingEdit ? "Đang lưu…" : "Lưu"}
-                                </button>
-                                <button
-                                  onClick={stopEdit}
-                                  className="px-3 py-1.5 rounded-2xl border text-sm hover:bg-slate-50"
-                                >
-                                  Hủy bỏ
-                                </button>
-                              </div>
-                            )}
+                          <div className="mt-2 text-[11px] text-slate-500">
+                            {handler && <>Người xử lý: <span className="font-medium text-slate-700">{handler}</span> • </>}
+                            Gửi lúc: <span className="font-medium text-slate-700">{fmtDT(r.created_at)}</span>
+                            {r.updated_at && (<> • Cập nhật: <span className="font-medium text-slate-700">{fmtDT(r.updated_at)}</span></>)}
                           </div>
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-
-                {/* Pagination */}
-                <div className="mt-4 flex items-center justify-between">
-                  <div className="text-sm text-slate-600">
-                    Trang <span className="font-semibold">{page}</span> / {Math.max(1, Math.ceil(total / pageSize))}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      disabled={!canPrev}
-                      onClick={() => canPrev && loadBookings({ toPage: page - 1 })}
-                      className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm disabled:opacity-50 hover:bg-slate-50"
-                    >
-                      <ChevronLeft className="h-4 w-4" /> Trước
-                    </button>
-                    <button
-                      disabled={!canNext}
-                      onClick={() => canNext && loadBookings({ toPage: page + 1 })}
-                      className="inline-flex items-center gap-1 rounded-xl border px-3 py-1.5 text-sm disabled:opacity-50 hover:bg-slate-50"
-                    >
-                      Sau <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                </div>
-              </>
-            ))}
-          </Card>
-
-          {/* Mẹo nhỏ */}
-          <Card className="p-4">
-            <div className="flex items-start gap-3">
-              <div className="shrink-0 grid place-items-center h-10 w-10 rounded-xl bg-sky-50 border border-sky-200">
-                <PackageOpen className="h-5 w-5 text-sky-700" />
+                    </div>
+                  );
+                })}
               </div>
-              <div className="text-sm text-slate-700 leading-relaxed">
-                • Trạng thái <b>Chờ duyệt → Đã nhận → Hoàn tất</b> hiển thị như “thanh tiến trình”.<br/>
-                • Bạn có thể <b>sửa</b> hoặc <b>hủy</b> khi đơn còn “Chờ duyệt”.<br/>
-                • Bật <b>Tự làm mới</b> để cập nhật theo thời gian thực giống Grab.
-              </div>
-            </div>
-          </Card>
-        </div>
-      </div>
-    </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }

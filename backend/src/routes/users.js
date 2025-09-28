@@ -153,8 +153,6 @@ async function buildFullUserProfile(uid) {
    Auth helpers
 ========================= */
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
-
-/** Optional lightweight JWT parser for this router (in case global middleware chưa gắn req.user) */
 function parseAuthIfMissing(req, _res, next) {
   if (req.user?.id) return next();
   const h = req.headers.authorization || "";

@@ -205,10 +205,6 @@ authRouter.get("/me", requireAuth, async (req, res) => {
  * header: Authorization: Bearer <token>
  * body: { new_password: string (>=8) }
  * return: {ok:true, message}
- *
- * Lưu ý:
- * - FE chỉ cần nhập mật khẩu mới 2 lần (validate phía FE). BE kiểm tra độ dài tối thiểu.
- * - Sau khi đổi thành công, hệ thống sẽ gửi email thông báo (hoặc fallback console).
  */
 authRouter.post("/change-password", requireAuth, async (req, res) => {
   try {

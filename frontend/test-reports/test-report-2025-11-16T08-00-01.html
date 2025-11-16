@@ -1,0 +1,237 @@
+
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📊 Báo Cáo Kiểm Thử - Bữa Cơm Xanh</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      padding: 20px;
+      min-height: 100vh;
+    }
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 30px;
+      text-align: center;
+    }
+    .header h1 {
+      font-size: 2.5em;
+      margin-bottom: 10px;
+      text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+    }
+    .header p {
+      font-size: 1.1em;
+      opacity: 0.95;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 20px;
+      padding: 30px;
+      background: #f8f9fa;
+    }
+    .stat-card {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .stat-card.success { border-left-color: #10b981; }
+    .stat-card.danger { border-left-color: #ef4444; }
+    .stat-card.info { border-left-color: #3b82f6; }
+    .stat-card.warning { border-left-color: #f59e0b; }
+    .stat-value {
+      font-size: 2em;
+      font-weight: bold;
+      color: #667eea;
+      margin: 10px 0;
+    }
+    .stat-label {
+      color: #6b7280;
+      font-size: 0.9em;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .stat-card.success .stat-value { color: #10b981; }
+    .stat-card.danger .stat-value { color: #ef4444; }
+    .stat-card.info .stat-value { color: #3b82f6; }
+    .stat-card.warning .stat-value { color: #f59e0b; }
+    .content {
+      padding: 30px;
+    }
+    .section-title {
+      font-size: 1.5em;
+      margin: 30px 0 20px 0;
+      color: #1f2937;
+      border-bottom: 2px solid #667eea;
+      padding-bottom: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 20px;
+      background: white;
+    }
+    thead {
+      background: #f3f4f6;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    th {
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      color: #374151;
+      font-size: 0.9em;
+    }
+    td {
+      padding: 12px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    tr:hover {
+      background: #f9fafb;
+    }
+    .status-pass {
+      background: #f0fdf4;
+    }
+    .status-pass td:last-child {
+      color: #10b981;
+      font-weight: 600;
+    }
+    .status-fail {
+      background: #fef2f2;
+    }
+    .status-fail td:last-child {
+      color: #ef4444;
+      font-weight: 600;
+    }
+    .footer {
+      background: #f8f9fa;
+      padding: 20px;
+      text-align: center;
+      color: #6b7280;
+      font-size: 0.9em;
+      border-top: 1px solid #e5e7eb;
+    }
+    .progress-bar {
+      width: 100%;
+      height: 30px;
+      background: #e5e7eb;
+      border-radius: 15px;
+      overflow: hidden;
+      margin: 10px 0;
+      display: flex;
+      align-items: center;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #10b981, #34d399);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+      font-size: 0.85em;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.85em;
+      font-weight: 600;
+      margin: 5px 2px;
+    }
+    .badge-pass { background: #d1fae5; color: #065f46; }
+    .badge-fail { background: #fee2e2; color: #991b1b; }
+    .badge-skip { background: #fef3c7; color: #92400e; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>📊 Báo Cáo Kiểm Thử - Bữa Cơm Xanh</h1>
+      <p>Kết quả chạy test lúc 15:00:01 16/11/2025</p>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-card info">
+        <div class="stat-label">Tổng Kiểm Thử</div>
+        <div class="stat-value">40</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-label">Thành Công</div>
+        <div class="stat-value">40</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-label">Thất Bại</div>
+        <div class="stat-value">0</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-label">Thời Gian</div>
+        <div class="stat-value">29.66s</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <h2 class="section-title">📈 Tỷ Lệ Thành Công</h2>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width: 100.00%">
+          100.00%
+        </div>
+      </div>
+      <p style="margin-top: 10px; color: #6b7280;">
+        <span class="badge badge-pass">✅ Thành công: 40</span>
+        <span class="badge badge-fail">❌ Thất bại: 0</span>
+      </p>
+
+      <h2 class="section-title">📋 Chi Tiết Kiểm Thử</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ID Kiểm Thử</th>
+            <th>Bộ Kiểm Thử</th>
+            <th>Tên Kiểm Thử</th>
+            <th>Điều Kiện Tiên Quyết</th>
+            <th>Dữ Liệu Nhập</th>
+            <th>Kết Quả Mong Muốn</th>
+            <th>Trạng Thái</th>
+            <th>Thời Gian (ms)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td colspan="8" style="text-align: center; padding: 20px; color: #9ca3af;">Không có kiểm thử nào</td></tr>
+        </tbody>
+      </table>
+
+      <h2 class="section-title">📝 Tóm Tắt</h2>
+      <p style="color: #4b5563; line-height: 1.8;">
+        <strong>Ngày chạy:</strong> 15:00:01 16/11/2025<br>
+        <strong>Tổng kiểm thử:</strong> 40<br>
+        <strong>Kiểm thử thành công:</strong> 40 (100.00%)<br>
+        <strong>Kiểm thử thất bại:</strong> 0 (0.00%)<br>
+        <strong>Thời gian thực thi:</strong> 29.66 giây<br>
+      </p>
+    </div>
+
+    <div class="footer">
+      <p>Báo cáo được tạo tự động bởi Jest HTML Reporter | Bữa Cơm Xanh Project</p>
+      <p>Generated: 2025-11-16T08:00:01.226Z</p>
+    </div>
+  </div>
+</body>
+</html>
+    

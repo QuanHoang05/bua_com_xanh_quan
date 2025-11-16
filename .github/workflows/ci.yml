@@ -34,7 +34,7 @@ jobs:
         run: npm test
 
       - name: Run backend npm audit
-        working-directory: ./BuaComXanh/backend
+        working-directory: ./backend
         run: npm audit --production --audit-level=moderate || true
 
   frontend:
@@ -64,5 +64,5 @@ jobs:
         run: npm test
 
       - name: Run frontend npm audit
-        working-directory: ./BuaComXanh/frontend
+        working-directory: ./frontend
         run: npm audit --production --audit-level=moderate || true

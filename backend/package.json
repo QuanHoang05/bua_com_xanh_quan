@@ -9,7 +9,8 @@
     "start:test": "cross-env NODE_ENV=test node -r dotenv/config src/server.js dotenv_config_path=.env.test",
     "seed": "node src/seed.js",
     "test:db:reset": "node src/seed_full.js",
-    "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles",
+    "test": "node scripts/run-tests-and-log.cjs",
+    "test:verbose": "node scripts/run-tests-and-log.cjs --mode=verbose",
     "test:report": "npm test && echo '\n✅ Báo cáo test đã được tạo tại: test-reports/'",
     "open:report": "node scripts/open-report.cjs"
   },

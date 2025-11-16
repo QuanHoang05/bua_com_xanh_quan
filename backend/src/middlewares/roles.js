@@ -1,6 +1,6 @@
 ﻿export function requireRole(...roles) {
   return async (req, res, next) => {
-    const current = (req.user?.role || "").toLowerCase();
+    const current = String(req.user?.role ?? "").toLowerCase();
 
     // If no role in token, reject
     if (!current)

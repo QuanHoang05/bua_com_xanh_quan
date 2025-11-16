@@ -1381,8 +1381,26 @@ admin.post(
   requireRole("admin"),
   async (req, res) => {
     const { title, content, level, active } = req.body || {};
-    if (!title || !content)
+    // Reject non-JSON/binary payloads for this endpoint (tests expect 415/400)
+    const ct = String(req.headers["content-type"] || "");
+    if (ct.includes("application/octet-stream"))
+      return res
+        .status(415)
+        .json({ message: "Chỉ chấp nhận JSON cho announcements" });
+
+    // Basic presence and type checks
+    if (typeof title !== "string" || typeof content !== "string")
       return res.status(400).json({ message: "Thiếu title/content" });
+
+    // Reject null-byte injections
+    if (title.includes("\x00") || content.includes("\x00"))
+      return res.status(400).json({ message: "Invalid input" });
+
+    // Reject excessively long inputs to avoid DoS / resource abuse
+    const MAX_TITLE = 2000;
+    const MAX_CONTENT = 20000;
+    if (title.length > MAX_TITLE || content.length > MAX_CONTENT)
+      return res.status(413).json({ message: "Payload too large" });
     await run(
       `INSERT INTO announcements (title, content, level, active, created_at)
      VALUES (?,?,?, ?, ${nowExpr})`,

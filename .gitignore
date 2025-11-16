@@ -19,3 +19,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# =========================
+# Test Reports & Logs
+# =========================
+**/test-reports/
+**/test-logs/

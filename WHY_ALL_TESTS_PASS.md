@@ -3,7 +3,7 @@
 ## 📊 Tình Trạng Hiện Tại
 
 - **Backend**: 210/210 tests ✅ **PASS**
-- **Frontend**: 40/40 tests ✅ **PASS**  
+- **Frontend**: 40/40 tests ✅ **PASS**
 - **Tổng**: 250/250 tests ✅ **PASS 100%**
 
 ---
@@ -40,18 +40,20 @@ jest.unstable_mockModule("../src/lib/db.js", () => ({
 }));
 
 // Mock JWT token
-const adminToken = jwt.sign({ id: 'admin-123', role: 'admin' }, "test_secret");
+const adminToken = jwt.sign({ id: "admin-123", role: "admin" }, "test_secret");
 
 // Mock data input
 const testData = { email: "test@example.com", password: "password123" };
 ```
 
 **Lợi ích**:
+
 - ✅ Tests chạy nhanh (không cần DB thật)
 - ✅ Tests ổn định (không phụ thuộc môi trường bên ngoài)
 - ✅ Có thể test edge cases dễ dàng
 
 **Vấn đề**:
+
 - ❌ Không phát hiện bugs thực tế ở DB hoặc APIs bên ngoài
 
 ---
@@ -59,6 +61,7 @@ const testData = { email: "test@example.com", password: "password123" };
 ### Lý Do #3: Code Đã Được Kiểm Thử Thủ Công
 
 Trước khi viết tests, code đã:
+
 - ✅ Hoạt động trong môi trường development
 - ✅ Được test thủ công qua Postman hoặc curl
 - ✅ Được review bởi developer
@@ -71,6 +74,7 @@ Trước khi viết tests, code đã:
 ### Lý Do #4: Tests Không Phủ Toàn Bộ Edge Cases
 
 Ví dụ:
+
 - ✅ Test: "Create user với email hợp lệ" → **PASS**
 - ❌ Test: "Database crash khi insert" → **KHÔNG CÓ**
 - ❌ Test: "Network timeout" → **KHÔNG CÓ**
@@ -82,25 +86,25 @@ Ví dụ:
 
 ### ✅ Coverage Tốt
 
-| Loại Test | Số Lượng | Mục Đích |
-|-----------|---------|---------|
-| **Authentication** | 25 | JWT, login, permissions |
-| **Admin Routes** | 100+ | CRUD operations |
-| **User Management** | 30 | Profile, settings |
-| **Payments** | 20 | Payment processing |
-| **Security** | 50+ | SQL injection, XSS, CSRF |
-| **Performance** | 15 | Response time, concurrency |
+| Loại Test           | Số Lượng | Mục Đích                   |
+| ------------------- | -------- | -------------------------- |
+| **Authentication**  | 25       | JWT, login, permissions    |
+| **Admin Routes**    | 100+     | CRUD operations            |
+| **User Management** | 30       | Profile, settings          |
+| **Payments**        | 20       | Payment processing         |
+| **Security**        | 50+      | SQL injection, XSS, CSRF   |
+| **Performance**     | 15       | Response time, concurrency |
 
 ### ❌ Coverage Yếu
 
-| Loại | Vấn Đề |
-|------|--------|
-| **Database Failure** | Không mock DB crash |
-| **External APIs** | Không test real API (Momo, VietQR, etc.) |
-| **Network Issues** | Không test timeout, connection errors |
-| **Large Data** | Không test với 100K+ records |
-| **Memory Leaks** | Không monitor memory |
-| **Real Browser** | Cypress không chạy được |
+| Loại                 | Vấn Đề                                   |
+| -------------------- | ---------------------------------------- |
+| **Database Failure** | Không mock DB crash                      |
+| **External APIs**    | Không test real API (Momo, VietQR, etc.) |
+| **Network Issues**   | Không test timeout, connection errors    |
+| **Large Data**       | Không test với 100K+ records             |
+| **Memory Leaks**     | Không monitor memory                     |
+| **Real Browser**     | Cypress không chạy được                  |
 
 ---
 
@@ -190,7 +194,7 @@ test("Should register user với MySQL thực", async () => {
   const res = await request(app)
     .post("/api/auth/register")
     .send({ email: "new@test.com", password: "pwd123" });
-  
+
   // Verify dữ liệu được lưu vào DB
   const user = db.get("SELECT * FROM users WHERE email = ?", "new@test.com");
   expect(user).toBeDefined();
@@ -203,13 +207,11 @@ test("Should register user với MySQL thực", async () => {
 test("Should handle 1000 concurrent requests", async () => {
   const promises = [];
   for (let i = 0; i < 1000; i++) {
-    promises.push(
-      request(app).get("/api/health")
-    );
+    promises.push(request(app).get("/api/health"));
   }
-  
+
   const results = await Promise.all(promises);
-  const failedCount = results.filter(r => r.status !== 200).length;
+  const failedCount = results.filter((r) => r.status !== 200).length;
   expect(failedCount).toBe(0); // Không được fail
 });
 ```
@@ -219,7 +221,7 @@ test("Should handle 1000 concurrent requests", async () => {
 ```javascript
 test("Should handle database disconnect", async () => {
   db.close(); // Close connection
-  
+
   const res = await request(app).get("/api/users");
   expect(res.status).toBe(500); // Server error
   expect(res.body.error).toContain("Database");
@@ -240,6 +242,7 @@ test("Should handle database disconnect", async () => {
 ### ⚠️ Cải Thiện
 
 Để phát hiện bugs thực tế:
+
 1. ✅ **Integration tests** (dùng DB thật)
 2. ✅ **E2E tests** (Cypress - hiện tại ko chạy)
 3. ✅ **Monitoring** (production)

@@ -45,6 +45,35 @@ class DetailedHTMLReporter {
     return `${suiteShort}-${String(index).padStart(2, "0")}`;
   }
 
+  // Clean up old reports, keeping only N most recent
+  cleanupOldReports(reportDir, keepCount = 3) {
+    try {
+      const files = fs
+        .readdirSync(reportDir)
+        .filter((f) => f.startsWith("test-report-") && f.endsWith(".html"))
+        .map((f) => ({
+          name: f,
+          path: path.join(reportDir, f),
+          mtime: fs.statSync(path.join(reportDir, f)).mtime.getTime(),
+        }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+      // Delete files beyond keepCount
+      if (files.length > keepCount) {
+        files.slice(keepCount).forEach((file) => {
+          try {
+            fs.unlinkSync(file.path);
+            console.log(`🗑️  Deleted old report: ${file.name}`);
+          } catch (e) {
+            console.warn(`⚠️  Failed to delete ${file.name}: ${e.message}`);
+          }
+        });
+      }
+    } catch (e) {
+      console.warn(`⚠️  Error cleaning up old reports: ${e.message}`);
+    }
+  }
+
   onRunComplete(contexts, results) {
     const reportDir = path.resolve(process.cwd(), "test-reports");
     if (!fs.existsSync(reportDir)) {
@@ -68,6 +97,9 @@ class DetailedHTMLReporter {
     let testRows = "";
     let globalTestIndex = 1;
 
+    // Collect failure details to show at bottom of report
+    let failuresHtml = "";
+
     // Build detailed table rows
     (results.testResults || []).forEach((suite) => {
       const suiteName = suite.name
@@ -75,6 +107,25 @@ class DetailedHTMLReporter {
         : "Unknown Suite";
       const environment = this.extractEnvironment(suite.name);
       const assertionResults = suite.assertionResults || [];
+
+      // collect failures for this suite
+      assertionResults.forEach((assertion) => {
+        if (assertion.status !== "passed") {
+          const messages = (assertion.failureMessages || []).join(
+            "\n\n---\n\n"
+          );
+          const safeMsg = String(messages)
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/\n/g, "<br/>");
+
+          failuresHtml +=
+            `\n<section style="margin-bottom:18px;padding:12px;border-radius:8px;background:#fff4f4;border:1px solid #fee2e2;">` +
+            `<h4 style="margin:0 0 8px 0;color:#991b1b">❌ ${suiteName} - ${assertion.title}</h4>` +
+            `<div style="font-family:monospace;font-size:0.85em;color:#111">${safeMsg}</div>` +
+            `</section>`;
+        }
+      });
 
       assertionResults.forEach((assertion, idx) => {
         const testCaseId = this.generateTestCaseId(suiteName, globalTestIndex);
@@ -573,28 +624,38 @@ class DetailedHTMLReporter {
         </div>
       </div>
 
-      <div class="section-title">📋 Chi Tiết Kiểm Thử</div>
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Test Case ID</th>
-              <th>Endpoint / Function</th>
-              <th>Pre-condition</th>
-              <th>Input / Action</th>
-              <th>Expected Result</th>
-              <th>Environment</th>
-              <th>Status</th>
-              <th>Actual / Expected Result</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${
-              testRows ||
-              '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #9ca3af;">Không có kiểm thử nào</td></tr>'
+      <div class="section-title">📋 Jest Test Output Log</div>
+      <div style="background:#f5f5f5;padding:15px;border-radius:8px;border-left:4px solid #667eea;overflow-x:auto;max-height:600px;overflow-y:auto;">
+        <pre style="margin:0;font-family:monospace;font-size:0.85em;color:#333;white-space:pre-wrap;word-break:break-word;"><![CDATA[${(() => {
+          const logDir = path.resolve(process.cwd(), "test-logs");
+          const logFile = path.join(logDir, "npm-test.log");
+          if (fs.existsSync(logFile)) {
+            try {
+              let logContent = fs.readFileSync(logFile, "utf-8");
+              return logContent.substring(0, 5000); // Limit to 5000 chars
+            } catch (e) {
+              return "Error reading log file: " + e.message;
             }
-          </tbody>
-        </table>
+          }
+
+          // Fallback to detailed test results if log file doesn't exist
+          return (results.testResults || [])
+            .map((suite) => {
+              const suitePath = suite.name
+                ? suite.name.replace(process.cwd(), "")
+                : "Unknown";
+              const assertions = (suite.assertionResults || [])
+                .map(
+                  (a) =>
+                    `  ${a.status === "passed" ? "✓" : "✗"} ${a.title} (${
+                      a.duration || 0
+                    }ms)`
+                )
+                .join("\n");
+              return `${suitePath}\n${assertions}`;
+            })
+            .join("\n\n");
+        })()}]]></pre>
       </div>
 
       <div class="summary">
@@ -626,6 +687,15 @@ class DetailedHTMLReporter {
           </div>
         </div>
       </div>
+      ${
+        failuresHtml
+          ? `
+      <div style="margin-top:24px;">
+        <div class="section-title">⚠️ Lỗi Chi Tiết (Failures)</div>
+        <div style="margin-top:12px;">${failuresHtml}</div>
+      </div>`
+          : ""
+      }
     </div>
 
     <div class="footer">
@@ -639,7 +709,51 @@ class DetailedHTMLReporter {
     `;
 
     fs.writeFileSync(reportFile, html, "utf-8");
+    // Also include the test run logs (npm test or npm run test:verbose) if present
+    try {
+      const logDir = path.resolve(process.cwd(), "test-logs");
+      const verboseLog = path.join(logDir, "npm-test-verbose.log");
+      const normalLog = path.join(logDir, "npm-test.log");
+      let selectedLog = null;
+      if (fs.existsSync(verboseLog)) selectedLog = verboseLog;
+      else if (fs.existsSync(normalLog)) selectedLog = normalLog;
+
+      if (selectedLog) {
+        const logContent = fs.readFileSync(selectedLog, "utf-8");
+        const safeLog = logContent
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\n/g, "<br/>");
+
+        // Append a simple log section to the report
+        const logSection =
+          `\n\n<!-- TEST LOG START -->\n<section style="padding:20px;background:#0f172a;color:#e6edf3;">` +
+          `<h2 style="color:#fff">🧾 Test Run Log</h2><pre style="white-space:pre-wrap;word-break:break-word;background:#071029;padding:12px;border-radius:8px;color:#e6edf3;">${safeLog}</pre></section>\n<!-- TEST LOG END -->\n`;
+
+        fs.appendFileSync(reportFile, logSection, "utf-8");
+      }
+    } catch (e) {
+      // silently ignore logging issues
+    }
+
     console.log(`\n✅ Chi tiết báo cáo test đã được tạo: ${reportFile}`);
+
+    // Clean up old reports AFTER creating new one - keep only 3 most recent
+    this.cleanupOldReports(reportDir, 3);
+
+    // Show cleanup status
+    try {
+      const remainingReports = fs
+        .readdirSync(reportDir)
+        .filter(
+          (f) => f.startsWith("test-report-") && f.endsWith(".html")
+        ).length;
+      console.log(
+        `📊 Tổng báo cáo được giữ lại: ${remainingReports} (tối đa 3)`
+      );
+    } catch (e) {
+      // ignore
+    }
   }
 }
 

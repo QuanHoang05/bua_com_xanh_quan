@@ -1,5 +1,6 @@
-﻿/* Tailwind v4 core */
-@import "tailwindcss";
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 /* =========================
    BASE: nền & chữ rõ ràng

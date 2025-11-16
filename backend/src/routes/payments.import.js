@@ -1,181 +1,110 @@
-import { Router } from "express";
-import multer from "multer";
-import { parse } from "csv-parse/sync";
-import { requireAuth, requireRole } from "../middlewares/auth.js";
-import "dotenv/config";
-
-const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
-let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else ({ db } = await import("../lib/db.js"));
+import { Router } from 'express';
+import multer from 'multer';
+import ExcelJS from 'exceljs';
+import { db } from '../lib/db.js';
+import { requireAuth, requireRole } from '../middlewares/auth.js'; // Import từ file middleware mới
 
 const router = Router();
-const upload = multer();
 
-/* ------------------------------ DB helpers ------------------------------ */
-async function dbAll(sql, params = []) {
-  if (useMySQL) {
-    if (typeof db.all === "function") return await db.all(sql, params);
-    const [rows] = await db.query(sql, params);
-    return rows ?? [];
-  }
-  return db.prepare(sql).all(...params);
-}
-async function dbRun(sql, params = []) {
-  if (useMySQL) {
-    // mysql2/promise: db.execute/query đều trả [rows, fields]
-    const [rows] = await db.query(sql, params);
-    return rows;
-  }
-  return db.prepare(sql).run(...params);
-}
-async function dbGet(sql, params = []) {
-  if (useMySQL) {
-    const [rows] = await db.query(sql, params);
-    return rows?.[0] ?? null;
-  }
-  return db.prepare(sql).get(...params);
-}
+// Cấu hình multer để lưu file trong bộ nhớ (buffer)
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage: storage,
+  fileFilter: (req, file, cb) => {
+    // Chỉ cho phép các file excel
+    if (
+      file.mimetype === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || // .xlsx
+      file.mimetype === 'application/vnd.ms-excel' // .xls
+    ) {
+      cb(null, true);
+    } else {
+      cb(new Error('Chỉ cho phép file Excel (.xlsx, .xls)!'), false);
+    }
+  },
+  limits: { fileSize: 5 * 1024 * 1024 } // Giới hạn 5MB
+});
 
-/* ------------------------------ utils ------------------------------ */
-function toNumberLoose(v) {
-  if (v == null) return 0;
-  const s = String(v)
-    .replace(/\s+/g, "")
-    .replace(/[₫,]/g, "")         // bỏ phân cách ngàn và ký hiệu VND
-    .replace(/\.?(?=\d{3}\b)/g, ""); // nắn một số định dạng lạ
-  const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-}
-
-function pick(obj, keys) {
-  const o = {};
-  for (const k of keys) if (obj[k] !== undefined) o[k] = obj[k];
-  return o;
-}
-
-function parsePaidAt(v) {
-  if (!v) return null;
-  // chấp nhận "YYYY-MM-DD HH:mm:ss", "DD/MM/YYYY", ...
-  const d = new Date(v);
-  if (isNaN(+d)) return null;
-  // Trả về chuỗi MySQL DATETIME 'YYYY-MM-DD HH:mm:ss'
-  const pad = (x) => String(x).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-/* 
-  API: POST /admin/payments/import-csv
-  form-data: file=<CSV file>
-*/
+/**
+ * POST /api/admin/payments/import
+ * Endpoint cho phép admin tải lên file Excel để import giao dịch.
+ * File Excel cần có các cột: code, amount, paid_at, donor_name, campaign_id
+ */
 router.post(
-  "/admin/payments/import-csv",
+  '/api/admin/payments/import',
   requireAuth,
-  requireRole("admin"),
-  upload.single("file"),
-  async (req, res) => {
+  requireRole('admin'),
+  upload.single('importFile'), // 'importFile' là tên của field trong form-data
+  async (req, res, next) => {
+    if (!req.file) {
+      return res.status(400).json({ message: 'Không có file nào được tải lên.' });
+    }
+
+    const workbook = new ExcelJS.Workbook();
+    const transactionsToInsert = [];
+
     try {
-      const csvBuf = req.file?.buffer;
-      if (!csvBuf) return res.status(400).json({ ok: false, error: "missing_file" });
+      // Đọc dữ liệu từ buffer của file
+      await workbook.xlsx.load(req.file.buffer);
+      const worksheet = workbook.getWorksheet(1); // Lấy sheet đầu tiên
 
-      const rows = parse(csvBuf, {
-        columns: true,
-        skip_empty_lines: true,
-        trim: true,
-      });
-
-      let scanned = 0;
-      let inserted = 0;
-      let updated = 0;
-      let matchedCampaign = 0;
-
-      for (const r of rows) {
-        scanned++;
-
-        // Map linh hoạt theo nhiều mẫu file ngân hàng
-        const bank_txn_id = String(
-          r.TransID ?? r.TxnID ?? r["Transaction ID"] ?? r["Trans Id"] ?? ""
-        ).trim();
-
-        const amount = toNumberLoose(r.Amount ?? r.Credit ?? r["Credit Amount"] ?? r["Deposit"] ?? 0);
-
-        const memo = String(
-          r.Description ?? r.Narration ?? r["Transaction Details"] ?? r["Details"] ?? ""
-        ).trim();
-
-        const paid_at_raw = r.Date ?? r["Transaction Date"] ?? r["Value Date"] ?? null;
-        const paid_at = parsePaidAt(paid_at_raw);
-
-        if (!bank_txn_id || !amount) {
-          continue; // bỏ qua dòng rác
-        }
-
-        // Bóc mã chiến dịch BXA#<id>
-        const m = memo.match(/BXA#(\d+)/i);
-        let campaignId = m ? Number(m[1]) : null;
-
-        // Chỉ gán campaign_id nếu tồn tại thật để tránh lỗi FK
-        if (campaignId) {
-          const found = await dbGet("SELECT id FROM campaigns WHERE id = ?", [campaignId]);
-          if (!found) campaignId = null;
-        }
-
-        /* ---------- Ghi nhận donation ---------- */
-        if (useMySQL) {
-          // Yêu cầu donations.bank_txn_id UNIQUE
-          const sql =
-            `INSERT INTO donations (campaign_id, type, amount, memo, bank_txn_id, status, paid_at)
-             VALUES (?, 'money', ?, ?, ?, 'success', ?)
-             ON DUPLICATE KEY UPDATE
-               amount = VALUES(amount),
-               memo = VALUES(memo),
-               paid_at = VALUES(paid_at)`;
-          const result = await dbRun(sql, [campaignId, amount, memo, bank_txn_id, paid_at]);
-          // mysql2: result.affectedRows = 1 (insert) | 2 (update row because of duplicate key)
-          if (result?.affectedRows === 1) inserted++;
-          else if (result?.affectedRows >= 2) updated++;
-        } else {
-          // SQLite: tạo UNIQUE(bank_txn_id) nếu có. Nếu chưa, ta emulate nhẹ
-          try {
-            await dbRun(
-              `INSERT OR IGNORE INTO donations (campaign_id, type, amount, memo, bank_txn_id, status, paid_at)
-               VALUES (?, 'money', ?, ?, ?, 'success', ?)`,
-              [campaignId, amount, memo, bank_txn_id, paid_at]
-            );
-            // Thử update nếu đã tồn tại
-            const upd = await dbRun(
-              `UPDATE donations
-                 SET amount=?, memo=?, paid_at=?
-               WHERE bank_txn_id=?`,
-              [amount, memo, paid_at, bank_txn_id]
-            );
-            if (upd?.changes) updated += upd.changes;
-            else inserted++;
-          } catch {
-            // fallback im lặng
-          }
-        }
-
-        /* ---------- Cộng dồn raised cho campaign (nếu match) ---------- */
-        if (campaignId) {
-          await dbRun(
-            `UPDATE campaigns SET raised = COALESCE(raised,0) + ? WHERE id = ?`,
-            [amount, campaignId]
-          );
-          matchedCampaign++;
-        }
+      if (!worksheet) {
+        throw new Error('File Excel không có sheet nào.');
       }
 
-      return res.json({
-        ok: true,
-        scanned,
-        inserted,
-        updated,
-        matchedCampaign,
+      // Xác thực header của file
+      const expectedHeaders = ['code', 'amount', 'paid_at', 'donor_name', 'campaign_id'];
+      const headerRow = worksheet.getRow(1);
+      const actualHeaders = [];
+      headerRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+        actualHeaders[colNumber - 1] = cell.value;
       });
-    } catch (e) {
-      console.error("[import-csv] error:", e);
-      return res.status(500).json({ ok: false, error: e?.message || "server_error" });
+
+      // Kiểm tra xem tất cả các header cần thiết có tồn tại không
+      const missingHeaders = expectedHeaders.filter(h => !actualHeaders.includes(h));
+      if (missingHeaders.length > 0) {
+        return res.status(400).json({ message: `File Excel thiếu các cột bắt buộc: ${missingHeaders.join(', ')}` });
+      }
+
+      // Đọc dữ liệu từ các dòng
+      worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+        // Bỏ qua dòng header
+        if (rowNumber === 1) return;
+
+        const rowData = {};
+        headerRow.eachCell((cell, colNumber) => {
+          rowData[cell.value] = row.getCell(colNumber).value;
+        });
+
+        // Chỉ lấy các giao dịch có đủ thông tin cơ bản
+        if (rowData.code && rowData.amount > 0) {
+          transactionsToInsert.push({
+            code: rowData.code,
+            amount: parseFloat(rowData.amount),
+            paid_at: new Date(rowData.paid_at),
+            donor_name: rowData.donor_name,
+            campaign_id: parseInt(rowData.campaign_id, 10) || null,
+            status: 'success', // Mặc định là thành công
+            provider: 'import',
+          });
+        }
+      });
+
+      if (transactionsToInsert.length === 0) {
+        return res.status(400).json({ message: 'Không tìm thấy giao dịch hợp lệ nào trong file.' });
+      }
+
+      // Chèn dữ liệu vào database (ví dụ: bảng 'donations')
+      // Lưu ý: Cần có cơ chế chống chèn trùng lặp dựa trên 'code'
+      const query = 'INSERT INTO donations (transaction_code, amount, paid_at, donor_name, campaign_id, status, payment_provider) VALUES ? ON DUPLICATE KEY UPDATE amount=VALUES(amount), paid_at=VALUES(paid_at)';
+      const values = transactionsToInsert.map(t => [t.code, t.amount, t.paid_at, t.donor_name, t.campaign_id, t.status, t.provider]);
+      
+      await db.pool.query(query, [values]);
+
+      res.status(200).json({ message: `Import thành công ${transactionsToInsert.length} giao dịch.` });
+
+    } catch (error) {
+      console.error('Lỗi xử lý file Excel:', error);
+      res.status(500).json({ message: 'Không thể xử lý file Excel.' });
     }
   }
 );

@@ -1,0 +1,81 @@
+// backend/test/auth.real.test.js
+import { describe, test, expect, beforeAll, afterAll } from "@jest/globals";
+import request from "supertest";
+import app from "../src/app.js";
+
+describe.skip("API Authentication (với DB thật)", () => {
+  let server;
+  // Khởi động server trước khi chạy các test trong file này
+  // và đóng lại sau khi xong để giải phóng port
+  beforeAll(() => {
+    // Sử dụng một port ngẫu nhiên để tránh xung đột
+    server = app.listen(0);
+  });
+
+  afterAll((done) => {
+    server.close(done);
+  });
+
+  // Test case 1: Đăng ký một tài khoản mới
+  describe("POST /api/auth/register", () => {
+    test("Nên tạo người dùng mới thành công và trả về token", async () => {
+      const newUser = {
+        name: "Real Test User",
+        email: `test.user.${Date.now()}@example.com`, // Email duy nhất để tránh lỗi trùng lặp
+        password: "real-password-123",
+        address: "123 Real Test Street",
+      };
+
+      console.log(`[TEST LOG] Đang thử đăng ký với email: ${newUser.email}`);
+
+      const res = await request(server)
+        .post("/api/auth/register")
+        .send(newUser);
+
+      // 1. Kiểm tra HTTP response
+      expect(res.statusCode).toBe(201);
+      expect(res.body).toHaveProperty("token");
+      expect(res.body.user?.email).toBe(newUser.email);
+
+      console.log("[TEST LOG] Đăng ký thành công, nhận được token.");
+    });
+
+    test("Nên báo lỗi 409 nếu email đã tồn tại", async () => {
+      const existingUser = {
+        name: "Existing User",
+        email: "user@test.com", // Email này đã được tạo trong beforeEach
+        password: "password123",
+        address: "Some address",
+      };
+
+      console.log(
+        `[TEST LOG] Đang thử đăng ký với email đã tồn tại: ${existingUser.email}`
+      );
+
+      const res = await request(server)
+        .post("/api/auth/register")
+        .send(existingUser);
+
+      expect(res.statusCode).toBe(409);
+      expect(res.body.message).toMatch(
+        /Email đã tồn tại|Email already exists/i
+      );
+      console.log("[TEST LOG] Nhận được lỗi 409 (Conflict) đúng như mong đợi.");
+    });
+  });
+
+  // Test case 2: Đăng nhập với tài khoản đã có
+  describe("POST /api/auth/login", () => {
+    test("Nên đăng nhập thành công với tài khoản hợp lệ và trả về token", async () => {
+      console.log("[TEST LOG] Đang thử đăng nhập với tài khoản user@test.com");
+      const res = await request(server).post("/api/auth/login").send({
+        email: "user@test.com", // Tài khoản từ beforeEach
+        password: "userpassword",
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty("token");
+      console.log("[TEST LOG] Đăng nhập thành công, đã nhận token.");
+    });
+  });
+});

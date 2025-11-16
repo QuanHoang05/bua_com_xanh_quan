@@ -1,0 +1,64 @@
+name: CI - Tests & Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend Tests & Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install backend deps
+        working-directory: ./BuaComXanh/backend
+        run: npm install
+
+      - name: Run backend tests
+        working-directory: ./BuaComXanh/backend
+        run: npm test
+
+      - name: Run backend npm audit
+        working-directory: ./BuaComXanh/backend
+        run: npm audit --production --audit-level=moderate || true
+
+  frontend:
+    name: Frontend Tests & Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [18, 20]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "npm"
+
+      - name: Install frontend deps
+        working-directory: ./BuaComXanh/frontend
+        run: npm install
+
+      - name: Run frontend tests
+        working-directory: ./BuaComXanh/frontend
+        run: npm test
+
+      - name: Run frontend npm audit
+        working-directory: ./BuaComXanh/frontend
+        run: npm audit --production --audit-level=moderate || true

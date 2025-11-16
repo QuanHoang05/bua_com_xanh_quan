@@ -1,0 +1,52 @@
+{
+  "items": [
+    {
+      "id": "clxjar70c0000123456789abc",
+      "title": "Bữa ăn cho trẻ em vùng cao",
+      "description": "Mang đến những bữa ăn đủ dinh dưỡng cho các em nhỏ tại các trường học ở Hà Giang.",
+      "status": "active",
+      "deadline": "2025-12-31T23:59:59.000Z",
+      "target_amount": 100000000,
+      "raised_amount": 45000000,
+      "supporters": 120,
+      "cover_url": "/images/placeholder-1.jpg",
+      "type": "money",
+      "created_at": "2025-10-01T10:00:00.000Z",
+      "meta": {
+        "type": "money"
+      }
+    },
+    {
+      "id": "clxjar70d0001123456789def",
+      "title": "Cứu trợ khẩn cấp tại vùng lũ lụt",
+      "description": "Hỗ trợ thực phẩm và nhu yếu phẩm cho bà con bị ảnh hưởng bởi lũ lụt ở miền Trung.",
+      "status": "active",
+      "deadline": "2025-11-30T23:59:59.000Z",
+      "target_amount": 200000000,
+      "raised_amount": 180000000,
+      "supporters": 350,
+      "cover_url": "/images/placeholder-2.jpg",
+      "type": "money",
+      "created_at": "2025-10-15T14:30:00.000Z",
+      "meta": {
+        "type": "money"
+      }
+    },
+    {
+      "id": "clxjar70e0002123456789ghi",
+      "title": "Gây quỹ xây trường mới",
+      "description": "Cùng chung tay xây dựng một ngôi trường mới khang trang cho các em học sinh.",
+      "status": "completed",
+      "deadline": "2025-09-01T23:59:59.000Z",
+      "target_amount": 500000000,
+      "raised_amount": 500000000,
+      "supporters": 800,
+      "cover_url": "/images/placeholder-3.jpg",
+      "type": "money",
+      "created_at": "2025-05-20T08:00:00.000Z",
+      "meta": {
+        "type": "money"
+      }
+    }
+  ]
+}

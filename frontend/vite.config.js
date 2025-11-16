@@ -1,24 +1,24 @@
 ﻿// frontend/vite.config.js
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path'; // Thêm import này
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
-    host: true,             // cho phép truy cập từ LAN/ngrok
+    host: true,
     port: 5173,
-    allowedHosts: [
-      "ef6f28df4a6b.ngrok-free.app", // đổi thành subdomain ngrok của bạn nếu thay #sửa ở đây để chạy momo
-    ],
     proxy: {
-      "/api": {
-        target: "http://localhost:4000", // backend dev local
+      '/api': {
+        target: 'http://localhost:4000', // Backend dev server
         changeOrigin: true,
         secure: false,
-      },
+      }
     },
   },
   resolve: {
-    dedupe: ["react", "react-dom"],
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+    },
   },
-});
+}));

@@ -1,0 +1,6 @@
+{
+  "watch": ["src/"],
+  "ext": "js,mjs,json",
+  "ignore": ["cypress/"],
+  "exec": "node src/server.js"
+}

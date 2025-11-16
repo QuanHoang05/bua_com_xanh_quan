@@ -1,51 +1,113 @@
-// src/hooks/useDeliveries.js
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { API_BASE } from "../lib/api";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
+import { useToast } from "../components/ui/Toast";
+import { apiGet, apiPatch, apiPost } from "../lib/api";
 
-function authHeader() {
-  const t = localStorage.getItem("bua_token") || sessionStorage.getItem("bua_token");
-  return t ? { Authorization: `Bearer ${t}` } : {};
-}
+/* ---------------- Endpoints ---------------- */
+const LIST_URL = (status, q) => {
+  const sp = new URLSearchParams();
+  sp.set("status", status || "active");
+  if (q?.trim()) sp.set("q", q.trim());
+  return `/api/shipper/deliveries?${sp.toString()}`;
+};
+const PATCH_URL = (id) => `/api/shipper/deliveries/${id}`;
+const POD_URL = (id) => `/api/shipper/deliveries/${id}/proof`;
 
-export function useDeliveries({ scope = "auto", booking_id = "", status = "", q = "", pageSize = 20 } = {}) {
+/* ---------------- Donation helpers ---------------- */
+const isDonation = (d) =>
+  !!d && (
+    d.kind === "donation" ||
+    d.type === "donation" ||
+    d.is_donation === true ||
+    d.source === "donor"
+  );
+
+const getMealQty = (d) => {
+  const n = Number(d?.qty ?? d?.booking_qty ?? 0);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+const INC_CAMPAIGN_MEALS_URL = (campaignId) =>
+  `/api/campaigns/${campaignId}/meals/increment`;
+
+export function useDeliveries() {
+  const t = useToast();
+  const [status, setStatus] = useState("active");
+  const [q, setQ] = useState("");
   const [items, setItems] = useState([]);
-  const [page, setPage] = useState(1);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [auto, setAuto] = useState(true);
 
-  const qs = useMemo(() => {
+  const query = useMemo(() => {
     const sp = new URLSearchParams();
-    if (scope) sp.set("scope", scope);
-    if (booking_id) sp.set("booking_id", booking_id);
-    if (status) sp.set("status", status);
-    if (q) sp.set("q", q);
-    sp.set("expand", "actors,route");
-    sp.set("page", String(page));
-    sp.set("pageSize", String(pageSize));
+    sp.set("status", status);
+    if (q.trim()) sp.set("q", q.trim());
     return sp.toString();
-  }, [scope, booking_id, status, q, page, pageSize]);
+  }, [status, q]);
 
-  const fetcher = useCallback(async () => {
+  const load = useCallback(async (currentSelectionId) => {
     setLoading(true);
+    let newSelection = null;
     try {
-      const r = await fetch(`${API_BASE}/api/deliveries?${qs}`, { headers: { ...authHeader() } });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data?.error || `HTTP ${r.status}`);
-      setItems(data.items || []);
-      setTotal(Number(data.total || 0));
-    } catch (e) {
-      console.error(e);
+      const res = await apiGet(LIST_URL(status, q));
+      const list = Array.isArray(res?.items) ? res.items : [];
+      setItems(list);
+      if (currentSelectionId) {
+        newSelection = list.find((d) => d.id === currentSelectionId) || list[0] || null;
+      } else {
+        newSelection = list[0] || null;
+      }
+    } catch {
+      t.error("Không tải được danh sách đơn");
       setItems([]);
-      setTotal(0);
     } finally {
       setLoading(false);
     }
-  }, [qs]);
+    return newSelection;
+  }, [status, q, t]);
 
-  useEffect(() => { fetcher(); }, [fetcher]);
+  const timerRef = useRef(null);
+  useEffect(() => {
+    if (!auto || status !== "active") {
+      timerRef.current && clearInterval(timerRef.current);
+      return;
+    }
+    timerRef.current = setInterval(() => load(), 5000);
+    return () => timerRef.current && clearInterval(timerRef.current);
+  }, [auto, status, load]);
+
+  async function recordDonationToCampaign(d) {
+    try {
+      if (!isDonation(d)) return;
+      const cid = d.campaign_id || d.campaignId;
+      const qty = getMealQty(d);
+      if (!cid || !qty) return;
+      await apiPost(INC_CAMPAIGN_MEALS_URL(cid), {
+        delta: qty,
+        reason: "donation_delivery",
+        delivery_id: d.id
+      });
+      t.success(`Đã cộng ${qty} suất vào chiến dịch.`);
+    } catch {
+      t.info("Không cộng được suất vào chiến dịch (BE chưa bật hoặc lỗi).");
+    }
+  }
+
+  const updateStatus = useCallback(async (id, next, currentItems) => {
+    try {
+      await apiPatch(PATCH_URL(id), { status: next });
+      t.success(`Đã cập nhật: ${next}`);
+      if (next === "delivered") {
+        const d = currentItems.find((x) => x.id === id);
+        if (d) await recordDonationToCampaign(d);
+      }
+    } catch (e) {
+      const m = String(e?.message || "");
+      t.error(m.includes("invalid_transition") ? "Chuyển trạng thái không hợp lệ." : (e.message || "Không cập nhật được"));
+    }
+  }, [t]);
 
   return {
-    items, total, page, setPage, loading,
-    refresh: fetcher,
+    items, loading, status, setStatus, q, setQ, auto, setAuto,
+    load, updateStatus, recordDonationToCampaign,
   };
 }

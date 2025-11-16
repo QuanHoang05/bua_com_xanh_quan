@@ -4,30 +4,38 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
-    "dev": "nodemon src/server.js",
+    "dev": "nodemon",
     "start": "node src/server.js",
-    "seed": "node src/seed.js"
+    "start:test": "cross-env NODE_ENV=test node -r dotenv/config src/server.js dotenv_config_path=.env.test",
+    "seed": "node src/seed.js",
+    "test:db:reset": "node src/seed_full.js",
+    "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles"
   },
   "dependencies": {
-    "bcryptjs": "^3.0.2",
+    "helmet": "^7.0.0",
+    "express-rate-limit": "^7.0.0",
+    "bcrypt": "^5.1.1",
     "better-sqlite3": "^9.6.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "csv-parse": "^6.1.0",
     "dotenv": "^16.6.1",
+    "exceljs": "^4.4.0",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
     "multer": "^2.0.2",
-    "mysql2": "^3.14.4",
+    "mysql2": "^3.15.3",
     "node-fetch": "^3.3.2",
     "nodemailer": "^7.0.6",
     "openai": "^5.20.2",
     "uuid": "^13.0.0",
-    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "nodemon": "^3.1.10"
+    "cross-env": "^7.0.3",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.10",
+    "supertest": "^7.1.4"
   }
 }

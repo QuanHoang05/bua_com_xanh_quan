@@ -7,13 +7,14 @@
 // - Donation-aware: nếu là đơn quyên góp -> cộng số suất vào chiến dịch khi Delivered
 // ================================================
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { apiGet, apiPatch, apiPost } from "../lib/api";
+import { apiPatch, apiPost } from "../lib/api";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Empty from "../components/ui/Empty";
 import { useToast } from "../components/ui/Toast";
+import { useDeliveries } from "../hooks/useDeliveries";
 import RouteMap from "../components/map/RouteMap";
 import {
   RefreshCcw, Bike, CheckCircle2, XCircle, ClipboardList, Copy,
@@ -22,38 +23,8 @@ import {
 } from "lucide-react";
 
 /* ---------------- Endpoints ---------------- */
-const LIST_URL = (status, q) => {
-  const sp = new URLSearchParams();
-  sp.set("status", status || "active");
-  if (q?.trim()) sp.set("q", q.trim());
-  return `/api/shipper/deliveries?${sp.toString()}`;
-};
 const PATCH_URL = (id) => `/api/shipper/deliveries/${id}`;
 const POD_URL = (id) => `/api/shipper/deliveries/${id}/proof`;
-
-/* ---------------- Donation helpers ---------------- */
-// BE nên trả về 1 trong các flag để nhận biết donation:
-//   kind: 'donation' | 'request' (khuyến nghị)
-//   hoặc type: 'donation'
-//   hoặc is_donation: true
-//   hoặc source: 'donor'
-const isDonation = (d) =>
-  !!d && (
-    d.kind === "donation" ||
-    d.type === "donation" ||
-    d.is_donation === true ||
-    d.source === "donor"
-  );
-
-// Số suất bữa quy đổi để cộng vào chiến dịch
-const getMealQty = (d) => {
-  const n = Number(d?.qty ?? d?.booking_qty ?? 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
-};
-
-// Endpoint cộng suất vào chiến dịch (tuỳ BE implement)
-const INC_CAMPAIGN_MEALS_URL = (campaignId) =>
-  `/api/campaigns/${campaignId}/meals/increment`;
 
 /* ---------------- Small UI ---------------- */
 const Pill = ({ tone = "slate", children }) => {
@@ -220,86 +191,41 @@ function ProofDrawer({ open, onClose, onSubmit, delivery }) {
 /* ---------------- Main ---------------- */
 export default function Shippers() {
   const t = useToast();
-  const [status, setStatus] = useState("active");
-  const [q, setQ] = useState("");
-  const [items, setItems] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [auto, setAuto] = useState(true);
+  const {
+    items, loading, status, setStatus, q, setQ, auto, setAuto,
+    load: loadDeliveries, updateStatus: updateDeliveryStatus, recordDonationToCampaign,
+  } = useDeliveries();
+
   const [selected, setSelected] = useState(null);
   const [podOpen, setPodOpen] = useState(false);
   const [mapOpen, setMapOpen] = useState(false);
 
-  const query = useMemo(() => {
-    const sp = new URLSearchParams();
-    sp.set("status", status);
-    if (q.trim()) sp.set("q", q.trim());
-    return sp.toString();
+  const handleLoad = useCallback(async () => {
+    const newSelection = await loadDeliveries(selected?.id);
+    setSelected(newSelection);
+  }, [loadDeliveries, selected?.id]);
+
+  // Initial load and load on filter change
+  useEffect(() => {
+    handleLoad();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, q]);
 
-  async function load() {
-    setLoading(true);
-    try {
-      const res = await apiGet(LIST_URL(status, q));
-      const list = Array.isArray(res?.items) ? res.items : [];
-      setItems(list);
-      if (selected) {
-        const fresh = list.find((d) => d.id === selected.id);
-        setSelected(fresh || list[0] || null);
-      } else setSelected(list[0] || null);
-    } catch {
-      t.error("Không tải được danh sách đơn");
-      setItems([]); setSelected(null);
-    } finally { setLoading(false); }
-  }
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [query]);
-
-  const timerRef = useRef(null);
-  useEffect(() => {
-    if (!auto || status !== "active") return;
-    timerRef.current && clearInterval(timerRef.current);
-    timerRef.current = setInterval(load, 5000);
-    return () => timerRef.current && clearInterval(timerRef.current);
-  }, [auto, status, query]);
-
-  // Ghi nhận đóng góp vào chiến dịch (chỉ khi là đơn quyên góp)
-  async function recordDonationToCampaign(d) {
-    try {
-      if (!isDonation(d)) return;
-      const cid = d.campaign_id || d.campaignId;
-      const qty = getMealQty(d);
-      if (!cid || !qty) return;
-      await apiPost(INC_CAMPAIGN_MEALS_URL(cid), {
-        delta: qty,
-        reason: "donation_delivery",
-        delivery_id: d.id
-      });
-      t.success(`Đã cộng ${qty} suất vào chiến dịch.`);
-    } catch {
-      // Không chặn luồng shipper
-      t.info("Không cộng được suất vào chiến dịch (BE chưa bật hoặc lỗi).");
-    }
-  }
-
   async function updateStatus(id, next) {
+    await updateDeliveryStatus(id, next, items);
+    await handleLoad();
+  }
+
+  async function cancelDelivery(id) {
     try {
-      await apiPatch(PATCH_URL(id), { status: next });
-      t.success(`Đã cập nhật: ${next}`);
-      // nếu sang delivered -> cộng suất (nếu là quyên góp)
-      if (next === "delivered") {
-        const d = items.find((x) => x.id === id) || selected;
-        if (d) await recordDonationToCampaign(d);
-      }
-      await load();
+      await apiPatch(PATCH_URL(id), { status: "cancelled" });
+      t.info("Đã huỷ đơn");
+      await handleLoad();
     } catch (e) {
-      const m = String(e?.message||"");
-      t.error(m.includes("invalid_transition") ? "Chuyển trạng thái không hợp lệ." : (e.message||"Không cập nhật được"));
-      await load();
+      t.error(e.message || "Không huỷ được");
     }
   }
-  async function cancelDelivery(id) {
-    try { await apiPatch(PATCH_URL(id), { status: "cancelled" }); t.info("Đã huỷ đơn"); await load(); }
-    catch (e) { t.error(e.message || "Không huỷ được"); }
-  }
+
   function copy(text, label="Đã sao chép") { navigator.clipboard?.writeText(String(text||""))?.then(()=>t.success(label)); }
 
   async function submitPod({ file, receiver, note }) {
@@ -315,10 +241,9 @@ export default function Shippers() {
       }
     }
     // 1) chuyển trạng thái sang delivered
-    await updateStatus(d.id, "delivered");
-    // 2) cộng suất cho chiến dịch nếu là đơn quyên góp
-    await recordDonationToCampaign(d);
+    await updateDeliveryStatus(d.id, "delivered", items);
     setPodOpen(false);
+    await handleLoad();
   }
 
   return (
@@ -351,7 +276,7 @@ export default function Shippers() {
               <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} />
               Tự làm mới 5s (khi đang hoạt động)
             </label>
-            <Button onClick={load}><RefreshCcw className="h-4 w-4 mr-1" /> Làm mới</Button>
+            <Button onClick={handleLoad}><RefreshCcw className="h-4 w-4 mr-1" /> Làm mới</Button>
           </div>
         </div>
       </Card>
@@ -375,7 +300,7 @@ export default function Shippers() {
                 const isActive = selected?.id === d.id;
                 return (
                   <tr key={d.id}
-                    className={`border-t ${idx%2?"bg-slate-50/40":"bg-white"} ${isActive?"outline outline-2 outline-emerald-300":""}`}>
+                    className={`border-t ${idx%2?"bg-slate-50/40":"bg-white"} ${isActive?"outline-2 outline-emerald-300":""}`}>
                     <td className="px-3 py-2 font-mono text-xs">
                       <button className="underline decoration-dotted" onClick={() => setSelected(d)} title="Xem chi tiết">{d.id}</button>
                       <Button variant="ghost" className="ml-1 px-1 py-0 h-6" title="Sao chép ID" onClick={() => copy(d.id)}>

@@ -1,19 +1,17 @@
-﻿// src/pages/Login.jsx (Glassy Cyber-Modern • big logo • colored heading • glowing border)
-import { useEffect, useState } from "react";
+﻿﻿// src/pages/Login.jsx (Glassy Cyber-Modern • big logo • colored heading • glowing border)
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { motion, AnimatePresence } from "framer-motion";
 import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import { useAuth } from "../auth/AuthContext";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import {
-  Mail, Lock, Eye, EyeOff, CheckCircle2, Loader2,
-} from "lucide-react";
+import { Mail, Lock, Eye, EyeOff, Loader2 } from "lucide-react";
+import AnimatedAuthBackground from "../components/ui/AnimatedAuthBackground";
+import AuthHero from "../components/ui/AuthHero";
 
 const base = import.meta.env.BASE_URL || "/";
 const LOGO_URL = `${base}images/logo.jpg`;
-const BG_URL = `${base}images/campaigns/auth-bg.jpg`;
-const BG_FALLBACK = `${base}images/campaigns/bg-fallback.jpg`;
 
 export default function Login() {
   const { register: rf, handleSubmit, formState, setError } = useForm({
@@ -25,31 +23,19 @@ export default function Login() {
   const nav = useNavigate();
   const loc = useLocation();
 
-  const [bgSrc, setBgSrc] = useState(BG_URL);
-  const [bgReady, setBgReady] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
-
-  useEffect(() => {
-    const img = new Image();
-    img.onload = () => setBgReady(true);
-    img.onerror = () => {
-      setBgSrc(BG_FALLBACK);
-      setBgReady(true);
-    };
-    img.src = BG_URL;
-  }, []);
 
   const onSubmit = async (v) => {
     try {
       await signIn(v.email, v.password, v.remember);
       const to = loc.state?.from?.pathname || "/";
       nav(to, { replace: true });
-    } catch {
+    } catch (err) {
       setShakeKey((k) => k + 1);
       setError("password", {
         type: "manual",
-        message: "Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.",
+        message: err.message || "Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.",
       });
     }
   };
@@ -57,40 +43,7 @@ export default function Login() {
   return (
     <div className="relative min-h-dvh w-full overflow-hidden bg-slate-950 text-slate-100">
       {/* ===== Background (aurora + grid + texture) ===== */}
-      <div className="absolute inset-0 -z-30">
-        <img
-          src={bgSrc}
-          alt=""
-          className="h-full w-full object-cover"
-          style={{ opacity: bgReady ? 1 : 0, transition: "opacity .6s ease" }}
-        />
-        <div className="absolute inset-0 bg-slate-950/60" />
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            background:
-              "radial-gradient(900px 520px at 12% 8%, rgba(16,185,129,0.22), transparent 55%), radial-gradient(1200px 700px at 88% 0%, rgba(56,189,248,0.18), transparent 60%), radial-gradient(900px 600px at 50% 100%, rgba(168,85,247,0.22), transparent 62%)",
-          }}
-        />
-        {/* soft vignette */}
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(0,0,0,0)_0%,rgba(0,0,0,0)_55%,rgba(0,0,0,0.5)_100%)]" />
-        {/* noise texture */}
-        <div className="absolute inset-0 mix-blend-overlay opacity-30 bg-[url('/noise.png')]" />
-        {/* animated tech grid mask */}
-        <motion.div
-          aria-hidden
-          className="absolute inset-0 [mask-image:radial-gradient(58%_58%_at_50%_42%,black,transparent)]"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 0.35 }}
-          transition={{ duration: 0.9 }}
-        >
-          <motion.div
-            className="absolute inset-0 bg-[linear-gradient(to_right,rgba(148,163,184,0.08)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.08)_1px,transparent_1px)] bg-[size:44px_44px]"
-            animate={{ backgroundPosition: ["0px 0px", "44px 44px"] }}
-            transition={{ duration: 12, ease: "linear", repeat: Infinity }}
-          />
-        </motion.div>
-      </div>
+      <AnimatedAuthBackground />
 
       {/* top glow */}
       <motion.div
@@ -103,62 +56,7 @@ export default function Login() {
       {/* ===== Content ===== */}
       <div className="relative z-10 mx-auto grid min-h-dvh w-full max-w-7xl grid-cols-1 lg:grid-cols-12 items-stretch">
         {/* Left hero */}
-        <motion.section
-          className="hidden lg:flex lg:col-span-7 px-10 xl:px-14 py-16"
-          initial={{ opacity: 0, x: -28 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
-        >
-          <div className="m-auto max-w-2xl">
-            {/* Big logo */}
-            <div className="flex items-center gap-5 mb-8">
-              <motion.img
-                src={LOGO_URL}
-                alt="Bữa Cơm Xanh"
-                className="h-16 w-auto rounded-xl shadow-[0_8px_40px_rgba(34,197,94,0.35)] ring-1 ring-emerald-400/30"
-                initial={{ scale: 0.96, rotate: -1 }}
-                animate={{ scale: 1, rotate: 0 }}
-                transition={{ type: "spring", stiffness: 140, damping: 12 }}
-              />
-              <motion.div
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.15 }}
-              >
-                <h1 className="text-5xl xl:text-6xl font-extrabold tracking-tight leading-tight">
-                  <span className="bg-gradient-to-r from-emerald-300 via-cyan-200 to-violet-300 bg-clip-text text-transparent drop-shadow">
-                    Bữa Cơm Xanh
-                  </span>
-                </h1>
-                <p className="mt-2 text-slate-200/90">
-                  Nền tảng quản trị quyên góp & vận hành hiện đại.
-                </p>
-              </motion.div>
-            </div>
-
-            {/* Feature bullets */}
-            <ul className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {[
-                ["Minh bạch số liệu", "Theo dõi realtime"],
-                ["Tối ưu quy trình", "Phân quyền chặt chẽ"],
-                ["Bảo mật", "Mã hoá & JWT"],
-                ["Hiệu suất cao", "UI hiện đại"],
-              ].map(([title, sub]) => (
-                <li
-                  key={title}
-                  className="flex items-start gap-3 rounded-xl border border-white/15 bg-white/7.5 p-4 backdrop-blur-xl"
-                  style={{ backgroundColor: "rgba(255,255,255,0.06)" }}
-                >
-                  <CheckCircle2 className="mt-0.5 size-5 text-emerald-300" />
-                  <div>
-                    <p className="font-semibold text-white">{title}</p>
-                    <p className="text-sm text-slate-300/90">{sub}</p>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </motion.section>
+        <AuthHero />
 
         {/* Right form */}
         <section className="relative lg:col-span-5 flex items-center px-6 sm:px-10 py-10">

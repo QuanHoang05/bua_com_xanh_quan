@@ -1,22 +1,29 @@
-﻿import jwt from "jsonwebtoken";
-import "dotenv/config";
+﻿// backend/src/middlewares/auth.js
 
+/**
+ * Middleware để kiểm tra xem người dùng đã đăng nhập hay chưa.
+ * Nó dựa vào middleware trước đó đã giải mã JWT và gắn vào `req.user`.
+ * @param {import('express').Request} req
+ * @param {import('express').Response} res
+ * @param {import('express').NextFunction} next
+ */
 export function requireAuth(req, res, next) {
-  const h = req.headers.authorization || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
-  if (!m) return res.status(401).json({ message: "Missing token" });
-  try {
-    req.user = jwt.verify(m[1], process.env.JWT_SECRET || "dev_secret");
-    next();
-  } catch {
-    return res.status(401).json({ message: "Invalid token" });
+  if (!req.user) {
+    return res.status(401).json({ error: "Unauthorized", message: "Yêu cầu đăng nhập." });
   }
+  next();
 }
 
-export function requireRole(...roles) {
-  return (req, _res, next) => {
-    if (!req.user || !roles.includes(req.user.role)) {
-      return next({ status: 403, message: "Forbidden" });
+/**
+ * Middleware factory để tạo ra một middleware kiểm tra vai trò người dùng.
+ * @param {string} role - Vai trò cần kiểm tra (vd: 'admin', 'shipper').
+ */
+export function requireRole(role) {
+  return (req, res, next) => {
+    if (!req.user) return res.status(401).json({ error: "Unauthorized" });
+    const roles = Array.isArray(req.user.roles) ? req.user.roles : [req.user.role].filter(Boolean);
+    if (!roles.includes(role)) {
+      return res.status(403).json({ error: "Forbidden", message: `Yêu cầu quyền ${role}.` });
     }
     next();
   };

@@ -1,0 +1,373 @@
+openapi: 3.0.0
+info:
+  title: Bữa Cơm Xanh - API Documentation
+  description: Tài liệu API cho các chức năng của dự án Bữa Cơm Xanh, bao gồm Admin, Donor, Shipper và Recipient.
+  version: 1.0.0
+
+servers:
+  - url: /api
+    description: Base URL for all API endpoints
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: ID của người dùng.
+        name:
+          type: string
+          description: Tên người dùng.
+          example: "Nguyễn Văn A"
+        email:
+          type: string
+          format: email
+          description: Email người dùng.
+          example: "user@example.com"
+        role:
+          type: string
+          enum: [admin, donor, shipper, recipient, user]
+          description: Vai trò của người dùng.
+          example: "donor"
+        status:
+          type: string
+          enum: [active, banned, deleted]
+          description: Trạng thái tài khoản.
+          example: "active"
+        created_at:
+          type: string
+          format: date-time
+          description: Thời gian tạo tài khoản.
+    Campaign:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID của chiến dịch.
+        title:
+          type: string
+          description: Tiêu đề chiến dịch.
+          example: "Chiến dịch Xuân Yêu Thương 2025"
+        description:
+          type: string
+          description: Mô tả chi tiết.
+          example: "Quyên góp bữa ăn cho người vô gia cư trong dịp Tết."
+        start_date:
+          type: string
+          format: date-time
+          example: "2025-01-20T00:00:00Z"
+        end_date:
+          type: string
+          format: date-time
+          example: "2025-02-10T23:59:59Z"
+        status:
+          type: string
+          enum: [upcoming, active, finished, cancelled]
+          example: "active"
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+          description: Mô tả lỗi.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Kiểm tra "sức khỏe" của API server
+      tags: [System]
+      responses:
+        '200':
+          description: Server đang hoạt động.
+          content:
+            application/json:
+              schema: { type: object, properties: { status: { type: string, example: "ok" }, time: { type: string, format: "date-time" } } }
+  /admin/users:
+    get:
+      summary: Lấy danh sách tất cả người dùng
+      tags: [Users]
+      responses:
+        '200':
+          description: Danh sách người dùng.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+        '403':
+          description: Không có quyền truy cập.
+    post:
+      summary: Tạo người dùng mới
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                email: { type: string, format: email }
+                password: { type: string }
+                role: { type: string, enum: [donor, shipper, recipient] }
+                status: { type: string, enum: [active, banned] }
+              required: [name, email, password, role]
+      responses:
+        '201':
+          description: Tạo người dùng thành công.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+        '400':
+          description: Dữ liệu không hợp lệ.
+
+  /admin/users/{id}:
+    get:
+      summary: Lấy thông tin chi tiết một người dùng
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Thông tin chi tiết người dùng.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '404':
+          description: Không tìm thấy người dùng.
+    patch:
+      summary: Cập nhật thông tin người dùng
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                status: { type: string, enum: [active, banned, deleted] }
+      responses:
+        '200':
+          description: Cập nhật thành công.
+        '404':
+          description: Không tìm thấy người dùng.
+    delete:
+      summary: Xóa người dùng
+      tags: [Users]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [soft, hard]
+            default: soft
+      responses:
+        '200':
+          description: Xóa thành công.
+        '404':
+          description: Không tìm thấy người dùng.
+
+  /admin/campaigns:
+    post:
+      summary: Tạo chiến dịch mới
+      tags: [Campaigns]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Campaign'
+      responses:
+        '201':
+          description: Tạo chiến dịch thành công.
+        '400':
+          description: Dữ liệu không hợp lệ.
+
+  /donor/me:
+    get:
+      summary: Lấy thông tin hồ sơ của nhà hảo tâm đang đăng nhập
+      tags: [Donor]
+      responses:
+        '200':
+          description: Thông tin hồ sơ nhà hảo tâm.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Chưa xác thực.
+
+  /donor/stats:
+    get:
+      summary: Lấy thống kê của nhà hảo tâm
+      tags: [Donor]
+      responses:
+        '200':
+          description: Dữ liệu thống kê.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total_money: { type: number }
+                  total_meals: { type: number }
+                  donations_count: { type: integer }
+                  campaigns_supported: { type: integer }
+        '401':
+          description: Chưa xác thực.
+
+  /donor/request-pickup:
+    post:
+      summary: Nhà hảo tâm tạo yêu cầu shipper đến lấy đồ
+      tags: [Donor]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string, description: "Tên món đồ/nội dung quyên góp" }
+                qty: { type: integer, description: "Số lượng" }
+                pickup_address: { type: string, description: "Địa chỉ lấy hàng" }
+                note: { type: string, description: "Ghi chú cho shipper" }
+              required: [title, qty, pickup_address]
+      responses:
+        '200':
+          description: Tạo yêu cầu thành công.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+                  booking_id: { type: string }
+        '400':
+          description: Dữ liệu không hợp lệ.
+
+  /shipper/available-bookings:
+    get:
+      summary: Shipper xem các đơn hàng (bookings) có sẵn để nhận
+      tags: [Shipper]
+      responses:
+        '200':
+          description: Danh sách các đơn hàng có sẵn.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    title: { type: string }
+                    status: { type: string, example: "pending" }
+        '401':
+          description: Chưa xác thực.
+
+  /shipper/accept-booking/{bookingId}:
+    post:
+      summary: Shipper chấp nhận một đơn hàng
+      tags: [Shipper]
+      parameters:
+        - name: bookingId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Chấp nhận đơn hàng thành công.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  delivery_id: { type: string }
+        '404':
+          description: Không tìm thấy đơn hàng.
+
+  /recipient/me:
+    get:
+      summary: Lấy thông tin hồ sơ của người nhận đang đăng nhập
+      tags: [Recipient]
+      responses:
+        '200':
+          description: Thông tin hồ sơ người nhận.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Chưa xác thực.
+
+  /foods:
+    get:
+      summary: Lấy danh sách các món ăn/suất ăn có sẵn
+      tags: [Recipient, Public]
+      responses:
+        '200':
+          description: Danh sách các món ăn.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: string }
+                    title: { type: string }
+                    qty: { type: integer }
+                    status: { type: string, example: "available" }
+
+  /recipient/request-food/{foodId}:
+    post:
+      summary: Người nhận gửi yêu cầu nhận một món ăn
+      tags: [Recipient]
+      parameters:
+        - name: foodId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                qty: { type: integer, default: 1 }
+                note: { type: string }
+      responses:
+        '200':
+          description: Gửi yêu cầu thành công.
+        '400':
+          description: Yêu cầu không hợp lệ (ví dụ: hết hàng).
+        '404':
+          description: Không tìm thấy món ăn.

@@ -1,4 +1,4 @@
-﻿// ================================================
+﻿﻿// ================================================
 // src/pages/Register.jsx — full-profile register (final)
 // ================================================
 
@@ -10,10 +10,11 @@ import {
   AlertTriangle, Phone, Calendar, BadgeCheck
 } from "lucide-react";
 
-import Button from "../components/ui/Button";
 import Card from "../components/ui/Card";
 import { useAuth } from "../auth/AuthContext";
 import { apiGet } from "../lib/api";
+import AuthHero from "../components/ui/AuthHero";
+import RegisterBackground from "../components/ui/RegisterBackground";
 
 /* ===================== Rules & validators ===================== */
 const PW_RULES = { min: 8, hasUpper: /[A-Z]/, hasLower: /[a-z]/, hasDigit: /[0-9]/ };
@@ -230,28 +231,11 @@ export default function Register() {
   /* ===================== UI ===================== */
   return (
     <div className="relative min-h-screen w-full overflow-hidden bg-gradient-to-b from-[#0c1222] via-[#0e1a2b] to-[#0b1323] text-white">
-      <div className="absolute inset-0 bg-[radial-gradient(1100px_600px_at_-10%_-10%,rgba(16,185,129,0.25),transparent),radial-gradient(900px_500px_at_110%_120%,rgba(99,102,241,0.25),transparent)]" />
-      <Particles density={80} />
+      <RegisterBackground />
 
       <div className="relative z-10 grid min-h-screen grid-cols-1 lg:grid-cols-[3fr_2fr]">
         {/* Left hero */}
-        <div className="flex flex-col items-center justify-center p-8 lg:p-16">
-          <div className="max-w-2xl">
-            <h2 className="text-4xl sm:text-5xl font-extrabold tracking-tight leading-tight text-white drop-shadow-[0_1px_0_rgba(0,0,0,0.4)]">
-              Chào mừng đến với <span className="bg-gradient-to-r from-emerald-300 via-cyan-200 to-indigo-200 bg-clip-text text-transparent">Bữa Cơm Xanh</span>
-            </h2>
-            <p className="mt-4 text-lg text-white/85 max-w-xl">
-              Kết nối nhà hảo tâm, người nhận và tình nguyện viên. Cùng lan tỏa những bữa cơm ấm áp mỗi ngày.
-            </p>
-            <ul className="mt-8 grid max-w-xl grid-cols-1 gap-4 sm:grid-cols-2">
-              {["Tài khoản một chạm","Theo dõi quyên góp","Thông báo thời gian thực","Bảo mật & riêng tư"].map((t) => (
-                <li key={t} className="rounded-xl border border-white/15 bg-white/10 p-4 text-center text-base font-semibold backdrop-blur hover:border-emerald-400 hover:bg-emerald-400/10 transition">
-                  {t}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
+        <AuthHero />
 
         {/* Right: form */}
         <div className="relative flex items-center justify-center p-6 lg:p-10">

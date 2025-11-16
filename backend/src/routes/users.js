@@ -1,9 +1,8 @@
 ﻿// backend/src/routes/users.js — final
 import { Router } from "express";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import "dotenv/config";
 
 /* =========================
    DB bootstrap
@@ -207,132 +206,6 @@ router.get("/check", handleExists);
 router.get("/exists", handleExists);
 
 /* ---------- AUTH ---------- */
-
-// POST /api/users/register
-router.post("/register", async (req, res) => {
-  try {
-    const {
-      email,
-      password,
-      name = "",
-      phone = "",
-      address = "",
-      lat = null,
-      lng = null,
-      profile = null,
-    } = req.body || {};
-
-    const normEmail = String(email || "").trim().toLowerCase();
-    if (!normEmail || !password) return res.status(400).json({ message: "Missing email/password" });
-
-    const byEmail = await get("SELECT id FROM users WHERE email=?", [normEmail]);
-    if (byEmail) return res.status(409).json({ code: "EMAIL_EXISTS", message: "Email already in use" });
-
-    if (phone) {
-      const byPhone = await get("SELECT id FROM users WHERE phone=?", [phone]);
-      if (byPhone) return res.status(409).json({ code: "PHONE_EXISTS", message: "Phone already in use" });
-    }
-
-    const hash = await bcrypt.hash(String(password), 10);
-    const id = crypto.randomUUID(); // 🔐 CHAR(36) PK
-
-    // cố gắng insert full (có lat/lng và profile_json); fallback nếu DB thiếu cột
-    try {
-      const params = profile
-        ? [id, normEmail, hash, name, phone, address, lat, lng, JSON.stringify(profile)]
-        : [id, normEmail, hash, name, phone, address, lat, lng];
-
-      const sql =
-        `INSERT INTO users (id, email, password_hash, name, phone, address, lat, lng, role, status, created_at, updated_at${
-          profile ? ", profile_json" : ""
-        })
-         VALUES (?,?,?,?,?,?,?,?,'user','active', ${NOW_SQL}, ${NOW_SQL}${profile ? ", ?" : ""})`;
-
-      await run(sql, params);
-    } catch (e) {
-      if (/no such column|unknown column/i.test(String(e?.message || ""))) {
-        await run(
-          `INSERT INTO users (id, email, password_hash, name, phone, address, role, status, created_at, updated_at)
-           VALUES (?,?,?,?,?,'user','active', ${NOW_SQL}, ${NOW_SQL})`,
-          [id, normEmail, hash, name, phone, address]
-        );
-      } else {
-        throw e;
-      }
-    }
-
-    const newUser = await get(
-      "SELECT id,email,name,role,status,avatar_url,phone,address,lat,lng FROM users WHERE id=?",
-      [id]
-    );
-    const token = signToken(newUser);
-    res.json({ token, user: newUser });
-  } catch (e) {
-    const msg = String(e?.message || "");
-    if (/ER_DUP_ENTRY/i.test(msg) || /UNIQUE constraint failed/i.test(msg)) {
-      if (/email/i.test(msg)) return res.status(409).json({ code: "EMAIL_EXISTS", message: "Email already in use" });
-      if (/phone/i.test(msg)) return res.status(409).json({ code: "PHONE_EXISTS", message: "Phone already in use" });
-      return res.status(409).json({ code: "DUPLICATE", message: "Duplicate value" });
-    }
-    res.status(500).json({ message: e?.message || "Server error" });
-  }
-});
-
-// POST /api/users/login
-router.post("/login", async (req, res) => {
-  try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const password = String(req.body?.password || "");
-    if (!email || !password) return res.status(400).json({ message: "Missing email/password" });
-
-    const user = await get("SELECT * FROM users WHERE email=?", [email]);
-    if (!user) return res.status(401).json({ message: "Invalid credentials" });
-
-    const ok = await bcrypt.compare(password, user.password_hash || "");
-    if (!ok) return res.status(401).json({ message: "Invalid credentials" });
-
-    // cập nhật dấu vết đăng nhập
-    try {
-      const ip =
-        req.headers["x-forwarded-for"]?.toString().split(",")[0].trim() ||
-        req.socket?.remoteAddress ||
-        null;
-      const updSql = `UPDATE users
-                        SET last_login_at=${NOW_SQL},
-                            last_login_ip=?,
-                            login_count=COALESCE(login_count,0)+1,
-                            updated_at=${NOW_SQL}
-                      WHERE id=?`;
-      await run(updSql, [ip, user.id]);
-    } catch (e) {
-      // fallback nếu DB thiếu cột
-      if (/no such column|unknown column/i.test(String(e?.message || ""))) {
-        await run(`UPDATE users SET updated_at=${NOW_SQL} WHERE id=?`, [user.id]);
-      } else {
-        console.warn("LOGIN_META_UPDATE_WARN", e);
-      }
-    }
-
-    const token = signToken(user);
-    res.json({
-      token,
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        role: user.role,
-        status: user.status,
-        avatar_url: user.avatar_url,
-        phone: user.phone,
-        address: user.address,
-        lat: user.lat,
-        lng: user.lng,
-      },
-    });
-  } catch (e) {
-    res.status(500).json({ message: e?.message || "Server error" });
-  }
-});
 
 // GET /api/users/me
 router.get("/me", requireAuth, async (req, res) => {

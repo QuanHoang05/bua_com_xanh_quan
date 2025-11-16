@@ -6,7 +6,7 @@ import { useAuth } from "./auth/AuthContext";
 /* ========================
    Lazy pages & layouts
 ======================== */
-const Layout = lazy(() => import("./components/layout/Layout"));
+import Layout from "./components/layout/Layout";
 
 // User pages
 const Overview = lazy(() => import("./pages/Overview"));

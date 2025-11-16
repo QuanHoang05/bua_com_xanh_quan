@@ -3,11 +3,10 @@
 
 import { Router } from "express";
 import multer from "multer";
-import * as XLSX from "xlsx";
-import bcrypt from "bcryptjs";
+import ExcelJS from "exceljs";
+import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-import "dotenv/config";
 
 // ===== middlewares (fallback no-op nếu thiếu) =====
 let requireAuth = (req, res, next) => next();
@@ -529,10 +528,28 @@ router.post("/users/import", requireAuth, requireRole("admin"), upload.single("f
   try {
     if (!req.file) return res.status(400).json({ ok: false, message: "NO_FILE" });
 
-    const wb = XLSX.read(req.file.buffer, { type: "buffer" });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+    const worksheet = workbook.getWorksheet(1);
+    if (!worksheet) {
+      return res.status(400).json({ ok: false, message: "File Excel không có sheet nào." });
+    }
 
+    const rows = [];
+    const headerRow = worksheet.getRow(1).values;
+    // Bỏ qua phần tử rỗng đầu tiên mà `eachRow` có thể tạo ra
+    const headers = Array.isArray(headerRow) ? headerRow.slice(1) : [];
+
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) {
+        const rowData = {};
+        row.values.slice(1).forEach((value, index) => {
+          rowData[headers[index]] = value;
+        });
+        rows.push(rowData);
+      }
+    });
+    
     let inserted = 0, duplicated = 0, failed = 0;
 
     for (const r of rows) {

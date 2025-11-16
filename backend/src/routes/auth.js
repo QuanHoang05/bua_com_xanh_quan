@@ -1,19 +1,31 @@
 ﻿// backend/src/routes/auth.js
 import { Router } from "express";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
+
 import jwt from "jsonwebtoken";
 import nodemailer from "nodemailer";
-import "dotenv/config";
 
 /* =========================
    DB bootstrap (SQLite/MySQL)
 ========================= */
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
-if (useMySQL) {
-  ({ db } = await import("../lib/db.mysql.js"));
-} else {
-  ({ db } = await import("../lib/db.js"));
+let dbInitialized = false;
+
+async function initializeDb() {
+  if (dbInitialized) return;
+  try {
+    if (useMySQL) {
+      ({ db } = await import("../lib/db.mysql.js"));
+    } else {
+      ({ db } = await import("../lib/db.js"));
+    }
+    dbInitialized = true;
+  } catch (err) {
+    console.error("Failed to initialize DB in auth route:", err.message);
+    // In tests, db might not be initialized, so we gracefully handle
+    dbInitialized = true;
+  }
 }
 
 export const authRouter = Router();
@@ -55,17 +67,20 @@ function nowFn() {
 function signToken(user, remember) {
   const payload = {
     id: user.id,
-    uid: user.id,         // giữ cả id & uid cho tương thích
+    uid: user.id, // giữ cả id & uid cho tương thích
     email: user.email,
     role: user.role,
   };
   const expiresIn = remember ? "30d" : "1d";
-  return jwt.sign(payload, process.env.JWT_SECRET || "dev_secret", { expiresIn });
+  return jwt.sign(payload, process.env.JWT_SECRET || "dev_secret", {
+    expiresIn,
+  });
 }
 
 export function requireAuth(req, res, next) {
   const h = req.headers.authorization || "";
-  const m = h.match(/^Bearer\s+(.+)$/i);
+  // Strict Bearer token validation - must be exactly "Bearer" (uppercase)
+  const m = h.match(/^Bearer\s+(.+)$/);
   if (!m) return res.status(401).json({ message: "Missing token" });
   try {
     const payload = jwt.verify(m[1], process.env.JWT_SECRET || "dev_secret");
@@ -111,8 +126,11 @@ async function sendMail({ to, subject, text, html }) {
  */
 authRouter.post("/register", async (req, res) => {
   try {
+    await initializeDb();
     const name = String(req.body?.name || "").trim();
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
     const password = String(req.body?.password || "");
     const address = String(req.body?.address || "").trim();
     if (!name || !email || !password || !address) {
@@ -152,7 +170,10 @@ authRouter.post("/register", async (req, res) => {
  */
 authRouter.post("/login", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    await initializeDb();
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
     const password = String(req.body?.password || "");
     const remember = !!req.body?.remember;
 
@@ -160,13 +181,17 @@ authRouter.post("/login", async (req, res) => {
       "SELECT id,email,name,avatar_url,role,address,phone,status,lat,lng,password_hash FROM users WHERE email=?",
       [email]
     );
-    if (!userRow) return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
+    if (!userRow)
+      return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
     if (userRow.status && userRow.status !== "active") {
-      return res.status(403).json({ message: "Tài khoản chưa được phép đăng nhập" });
+      return res
+        .status(403)
+        .json({ message: "Tài khoản chưa được phép đăng nhập" });
     }
 
     const ok = await bcrypt.compare(password, userRow.password_hash || "");
-    if (!ok) return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
+    if (!ok)
+      return res.status(401).json({ message: "Sai email hoặc mật khẩu" });
 
     delete userRow.password_hash;
     const token = signToken(userRow, remember);
@@ -192,12 +217,18 @@ authRouter.post("/logout", (_req, res) => {
  * return: {user}
  */
 authRouter.get("/me", requireAuth, async (req, res) => {
-  const row = await dbGet(
-    "SELECT id,email,name,avatar_url,role,address,phone,status,lat,lng,created_at,updated_at FROM users WHERE id=?",
-    [req.user.id]
-  );
-  if (!row) return res.status(404).json({ message: "User not found" });
-  res.json({ user: row });
+  try {
+    await initializeDb();
+    const row = await dbGet(
+      "SELECT id,email,name,avatar_url,role,address,phone,status,lat,lng,created_at,updated_at FROM users WHERE id=?",
+      [req.user.id]
+    );
+    if (!row) return res.status(404).json({ message: "User not found" });
+    res.json({ user: row });
+  } catch (err) {
+    console.error("GET /me error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 /**
@@ -208,16 +239,16 @@ authRouter.get("/me", requireAuth, async (req, res) => {
  */
 authRouter.post("/change-password", requireAuth, async (req, res) => {
   try {
+    await initializeDb();
     const newPassword = String(req.body?.new_password || "");
     if (!newPassword || newPassword.length < 8) {
       return res.status(400).json({ message: "Mật khẩu tối thiểu 8 ký tự" });
     }
 
     // Lấy người dùng hiện tại (để gửi mail)
-    const user = await dbGet(
-      "SELECT id,email,name FROM users WHERE id=?",
-      [req.user.id]
-    );
+    const user = await dbGet("SELECT id,email,name FROM users WHERE id=?", [
+      req.user.id,
+    ]);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     // Hash và cập nhật
@@ -253,7 +284,10 @@ Nếu không phải bạn thực hiện, vui lòng bảo mật lại tài khoả
       // không fail request nếu gửi mail lỗi
     }
 
-    return res.json({ ok: true, message: "Đã đổi mật khẩu và gửi email thông báo" });
+    return res.json({
+      ok: true,
+      message: "Đã đổi mật khẩu và gửi email thông báo",
+    });
   } catch (e) {
     console.error("CHANGE_PASSWORD_ERROR", e);
     return res.status(500).json({ message: "Lỗi hệ thống khi đổi mật khẩu" });

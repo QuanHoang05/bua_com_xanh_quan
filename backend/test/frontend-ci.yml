@@ -1,0 +1,43 @@
+# .github/workflows/frontend-ci.yml
+
+name: Frontend CI
+
+# Chạy workflow này khi có thay đổi trong thư mục frontend
+on:
+  push:
+    branches: [ "main", "develop" ]
+    paths:
+      - 'Bua_com_xanh/frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+  pull_request:
+    branches: [ "main", "develop" ]
+    paths:
+      - 'Bua_com_xanh/frontend/**'
+      - '.github/workflows/frontend-ci.yml'
+
+jobs:
+  test-frontend:
+    runs-on: ubuntu-latest
+
+    # Đặt thư mục làm việc mặc định cho tất cả các bước trong job này
+    defaults:
+      run:
+        working-directory: ./Bua_com_xanh/frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          # Chỉ định đường dẫn tới package-lock.json để cache hoạt động đúng
+          cache-dependency-path: 'Bua_com_xanh/frontend/package-lock.json'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run Component Tests (React Testing Library)
+        run: npm test

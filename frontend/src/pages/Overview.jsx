@@ -1,11 +1,14 @@
-﻿// --- src/pages/Overview.jsx — charity-style (TeamSeas vibe), PREMIUM UI/UX ---
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿﻿// --- src/pages/Overview.jsx — charity-style (TeamSeas vibe), PREMIUM UI/UX ---
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { apiGet } from "../lib/api";
 import {
   Users, Soup, HandHeart, Megaphone, ArrowRight, MapPin,
   Calendar, Timer, AlertTriangle, Sparkles, Filter,
   HeartHandshake, Crown, Coins, Activity, CreditCard, Merge
 } from "lucide-react";
+import { useOverviewStats } from "../hooks/useOverviewStats";
+import { useActivityFeed } from "../hooks/useActivityFeed";
+import { useFoodRecommendations } from "../hooks/useFoodRecommendations";
 
 /* --------------------------- UI PRIMITIVES --------------------------- */
 const Card = ({ className = "", children }) => (
@@ -461,18 +464,9 @@ function MyMealProgress({ count }) {
 
 /* --------------------------- MAIN PAGE --------------------------- */
 export default function Overview() {
-  // Core stats
-  const [stats, setStats] = useState(null);
-  const [loadingStats, setLoadingStats] = useState(true);
-
   // Featured campaigns
   const [featured, setFeatured] = useState({ items: [], total: 0 });
   const [loadingFeat, setLoadingFeat] = useState(true);
-
-  // Leaderboard & activity
-  const [topDonors, setTopDonors] = useState([]);
-  const [recentDonations, setRecentDonations] = useState([]);
-  const [recentTxns, setRecentTxns] = useState([]);
 
   // Foods (latest)
   const [foods, setFoods] = useState([]);
@@ -481,38 +475,19 @@ export default function Overview() {
   const [mounted, setMounted] = useState(false);
   const [toast, setToast] = useState({ show: false, type: "success", message: "" });
 
-  // Geolocation & pickup
-  const [latlng, setLatlng] = useState({ lat: null, lng: null });
-
-  // Reco filter
-  const [maxKm, setMaxKm] = useState(5);
-  const [dietPref, setDietPref] = useState("any");
-  const [recoSort, setRecoSort] = useState("priority");
-  const [personalize, setPersonalize] = useState(true);
-  const [reco, setReco] = useState({ items: [], ok: true, msg: "" });
-  const [loadingReco, setLoadingReco] = useState(false);
-
-  // Grouping (NEW)
-  const [mergeFoods, setMergeFoods] = useState(true);
-
   // My meal donations (NEW)
   const [myMealCount, setMyMealCount] = useState(0);
   const [loadingMyMeals, setLoadingMyMeals] = useState(true);
 
   useEffect(() => { setMounted(true); }, []);
 
-  /* ---- Load overview stats ---- */
-  useEffect(() => {
-    (async () => {
-      setLoadingStats(true);
-      try {
-        const s = await apiGet("/api/overview").catch(() => ({}));
-        setStats(s || {});
-      } finally {
-        setLoadingStats(false);
-      }
-    })();
-  }, []);
+  // Use new hooks
+  const { loading: loadingStats, ...stats } = useOverviewStats(featured.items);
+  const { topDonors, recentDonations, recentTxns } = useActivityFeed();
+  const {
+    latlng, getLocation, filters: recoFilters, setFilter: setRecoFilter,
+    loading: loadingReco, reco, fetchRecommendations, displayItems: recoDisplayItems
+  } = useFoodRecommendations();
 
   /* ---- Load featured campaigns ---- */
   useEffect(() => {
@@ -520,7 +495,7 @@ export default function Overview() {
       setLoadingFeat(true);
       try {
         let res = await apiGet("/api/campaigns?featured=1&pageSize=6");
-        if (!res?.items?.length) res = await apiGet("/api/campaigns?page=1&pageSize=6");
+        if (!res?.items?.length) res = await apiGet("/api/campaigns?page=1&pageSize=6").catch(() => null);
         const items = (res?.items || res || []).map(normalizeCampaign);
         setFeatured({ items, total: res?.total || items.length });
       } catch {
@@ -528,46 +503,6 @@ export default function Overview() {
       } finally {
         setLoadingFeat(false);
       }
-    })();
-  }, []);
-
-  /* ---- Load multi tables: leaderboard, donations, transactions, foods ---- */
-  useEffect(() => {
-    (async () => {
-      try {
-        const [lb, dons, txs, foodsRes] = await Promise.allSettled([
-          apiGet("/api/leaderboard?type=donors&limit=5"),
-          apiGet("/api/donations?limit=8"),
-          apiGet("/api/transactions?limit=6"),
-          apiGet("/api/foods?limit=50") // lấy nhiều hơn để gộp
-        ]);
-
-        if (lb.status === "fulfilled" && lb.value) {
-          const arr = (lb.value?.items || lb.value || []).map((x, i) => ({
-            id: x.id ?? x._id ?? i,
-            name: (x.name || x?.user?.name || x?.donor?.name || "Ẩn danh"),
-            total: toNum(x.total ?? x.amount ?? x.sum, 0),
-          }));
-          setTopDonors(arr.slice(0, 5));
-        }
-
-        if (dons.status === "fulfilled" && dons.value) {
-          const arrRaw = (dons.value?.items || dons.value || []).map(normalizeDonation);
-          const arr = arrRaw.filter(d => d.ok);
-          setRecentDonations(arr.slice(0, 8));
-        }
-
-        if (txs.status === "fulfilled" && txs.value) {
-          const arrRaw = (txs.value?.items || txs.value || []).map(normalizeTransaction);
-          const arr = arrRaw.filter(t => t.ok);
-          setRecentTxns(arr.slice(0, 6));
-        }
-
-        if (foodsRes.status === "fulfilled" && foodsRes.value) {
-          const raw = (foodsRes.value?.items || foodsRes.value || []).map(normalizeFood);
-          setFoods(raw); // lưu raw, render sẽ quyết định gộp hay không
-        }
-      } catch { /* no-op */ }
     })();
   }, []);
 
@@ -592,103 +527,13 @@ export default function Overview() {
     })();
   }, []);
 
-  /* ---- Derived stats ---- */
-  const mealsGivenApi = useMemo(() => {
-    const m = stats?.meals_given ?? stats?.meals ?? stats?.distributed_meals ?? 0;
-    return Number.isFinite(Number(m)) ? Number(m) : 0;
-  }, [stats]);
-
-  const mealsFromStatsCampaign = useMemo(() => {
-    return toNum(
-      stats?.extra_meals ??
-      stats?.meals_from_campaigns ??
-      stats?.sum_meal_received_qty ??
-      stats?.meals_from_meal_col ??
-      stats?.meals_from_received, 0
-    );
-  }, [stats]);
-
-  const mealsFromFeatured = useMemo(
-    () => (featured.items || []).reduce((sum, c) => sum + toNum(c.meal_received_qty, 0), 0),
-    [featured]
-  );
-
-  const mealsGiven = Math.max(
-    0,
-    mealsGivenApi || 0,
-    mealsFromStatsCampaign || 0,
-    mealsFromFeatured || 0
-  );
-
-  const donors = stats?.donors ?? stats?.total_donors ?? 0;
-  const recipients = stats?.recipients ?? stats?.total_recipients ?? 0;
-  const campaigns = stats?.campaigns ?? stats?.active_campaigns ?? 0;
-
-  const globalGoal = toNum(stats?.global_goal ?? stats?.target_meals ?? stats?.target_amount, 0);
-  const globalRaised = toNum(stats?.global_raised ?? stats?.raised_meals ?? stats?.raised_amount ?? stats?.raised, 0);
-  const progressPct = globalGoal > 0 ? clamp(Math.round((globalRaised / globalGoal) * 100), 0, 100) : 0;
-
-  const deliveredMeals = useMemo(() => {
-    const v =
-      stats?.rescued_meals_total ??
-      stats?.meals_delivered ??
-      stats?.delivered_meals ??
-      0;
-    return Number.isFinite(Number(v)) ? Number(v) : 0;
-  }, [stats]);
-
-  const heroCount = useCountUp(mealsGiven, 1200);
+  const heroCount = useCountUp(stats.mealsGiven, 1200);
 
   /* ---- Toast helpers ---- */
   const showToast = (message, type = "success") => {
     setToast({ show: true, type, message });
     setTimeout(() => setToast((t) => ({ ...t, show: false })) , 2800);
   };
-
-  /* ---- Geolocation + pickup ---- */
-  function getLocation() {
-    if (!navigator.geolocation) { showToast("Trình duyệt không hỗ trợ định vị.", "warning"); return; }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => { setLatlng({ lat: pos.coords.latitude, lng: pos.coords.longitude }); showToast("Đã lấy vị trí của bạn.", "info"); },
-      () => showToast("Không lấy được vị trí. Hãy cấp quyền định vị.", "warning"),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
-    );
-  }
-
-  async function fetchRecommendations() {
-    setLoadingReco(true);
-    try {
-      const qs = new URLSearchParams({
-        maxKm: String(maxKm),
-        diet: dietPref,
-        personalize: String(personalize),
-        sort: recoSort,
-        limit: "50",
-        lat: latlng.lat ?? "",
-        lng: latlng.lng ?? "",
-      }).toString();
-      const data = await apiGet(`/api/reco/foods?${qs}`);
-      const arr = Array.isArray(data) ? data : data?.items || [];
-      const normalized = arr.map(normalizeFood);
-      setReco({
-        items: mergeFoods ? groupFoods(normalized) : normalized,
-        ok: true,
-        msg: ""
-      });
-      showToast("Đã cập nhật gợi ý phù hợp.", "info");
-    } catch {
-      setReco({ items: [], ok: false, msg: "Không lấy được gợi ý." });
-      showToast("Không lấy được gợi ý. Thử lại sau.", "danger");
-    } finally {
-      setLoadingReco(false);
-    }
-  }
-
-  // foods hiển thị (áp dụng gộp nếu bật)
-  const foodsDisplay = useMemo(
-    () => (mergeFoods ? groupFoods(foods) : foods).slice(0, 12),
-    [foods, mergeFoods]
-  );
 
   return (
     <>
@@ -716,15 +561,15 @@ export default function Overview() {
               </h1>
 
               <div className="mt-4 mb-2">
-                {globalGoal > 0 && (
+                {stats.globalGoal > 0 && (
                   <>
                     <div className="flex items-center justify-between text-sm text-slate-800 mb-2">
                       <span>Tiến độ chiến dịch tổng</span>
-                      <span className="font-semibold text-slate-900">{progressPct}%</span>
+                      <span className="font-semibold text-slate-900">{stats.progressPct}%</span>
                     </div>
-                    <ProgressBar pct={progressPct} large />
+                    <ProgressBar pct={stats.progressPct} large />
                     <div className="mt-1.5 text-xs text-slate-700">
-                      {(globalRaised || 0).toLocaleString("vi-VN")} / {globalGoal.toLocaleString("vi-VN")} {stats?.unit || "bữa/đồng"}
+                      {(stats.globalRaised || 0).toLocaleString("vi-VN")} / {stats.globalGoal.toLocaleString("vi-VN")} {stats.unit}
                     </div>
                   </>
                 )}
@@ -754,10 +599,10 @@ export default function Overview() {
 
             {/* Stats grid incl. NEW 'Bữa đã trao' */}
             <div className="grid grid-cols-2 sm:grid-cols-2 lg:grid-cols-4 gap-3 w-full lg:w-[36rem]">
-              <StatChip icon={Users} label="Nhà hảo tâm" value={(donors || 0).toLocaleString("vi-VN")} />
-              <StatChip icon={HandHeart} label="Người nhận" value={(recipients || 0).toLocaleString("vi-VN")} />
-              <StatChip icon={Megaphone} label="Chiến dịch đang chạy" value={(campaigns || 0).toLocaleString("vi-VN")} />
-              <StatChip icon={Soup} label="Bữa đã trao" value={(deliveredMeals || 0).toLocaleString("vi-VN")} />
+              <StatChip icon={Users} label="Nhà hảo tâm" value={(stats.donors || 0).toLocaleString("vi-VN")} />
+              <StatChip icon={HandHeart} label="Người nhận" value={(stats.recipients || 0).toLocaleString("vi-VN")} />
+              <StatChip icon={Megaphone} label="Chiến dịch đang chạy" value={(stats.campaigns || 0).toLocaleString("vi-VN")} />
+              <StatChip icon={Soup} label="Bữa đã trao" value={(stats.deliveredMeals || 0).toLocaleString("vi-VN")} />
             </div>
           </div>
         </GradientFrame>
@@ -842,8 +687,8 @@ export default function Overview() {
               <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none text-slate-900">
                 <input
                   type="checkbox"
-                  checked={mergeFoods}
-                  onChange={() => setMergeFoods(v => !v)}
+                  checked={recoFilters.merge}
+                  onChange={(e) => setRecoFilter('merge', e.target.checked)}
                   className="h-4 w-4 rounded border-slate-400 text-emerald-600 focus:ring-emerald-300"
                 />
                 <Merge size={14}/> Gộp món cùng người hoặc trùng nhau
@@ -865,22 +710,22 @@ export default function Overview() {
               <label className="text-sm text-slate-800">Bán kính</label>
               <div className="relative w-44">
                 <input
-                  type="range" min={1} max={20} value={maxKm}
-                  onChange={(e) => setMaxKm(Number(e.target.value))}
+                  type="range" min={1} max={20} value={recoFilters.maxKm}
+                  onChange={(e) => setRecoFilter('maxKm', Number(e.target.value))}
                   className="w-full appearance-none bg-transparent relative z-10"
                 />
                 <div className="pointer-events-none absolute inset-y-1.5 left-0 right-0 rounded-full bg-slate-200" />
                 <div
                   className="pointer-events-none absolute inset-y-1.5 left-0 rounded-full bg-gradient-to-r from-emerald-600 to-sky-600"
-                  style={{ width: `${(maxKm / 20) * 100}%` }}
+                  style={{ width: `${(recoFilters.maxKm / 20) * 100}%` }}
                 />
               </div>
-              <div className="w-12 text-right text-sm tabular-nums text-slate-900">{maxKm}km</div>
+              <div className="w-12 text-right text-sm tabular-nums text-slate-900">{recoFilters.maxKm}km</div>
             </div>
 
             <div className="flex items-center gap-2">
               <label className="text-sm text-slate-800">Chế độ ăn</label>
-              <Select value={dietPref} onChange={(e) => setDietPref(e.target.value)}>
+              <Select value={recoFilters.diet} onChange={(e) => setRecoFilter('diet', e.target.value)}>
                 <option value="any">Bất kỳ</option>
                 <option value="chay">Ăn chay</option>
                 <option value="halal">Halal</option>
@@ -892,20 +737,20 @@ export default function Overview() {
             <div className="flex items-center gap-2 ml-auto">
               <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none text-slate-900">
                 <input
-                  type="checkbox" checked={personalize}
-                  onChange={() => setPersonalize(!personalize)}
+                  type="checkbox" checked={recoFilters.personalize}
+                  onChange={(e) => setRecoFilter('personalize', e.target.checked)}
                   className="h-4 w-4 rounded border-slate-400 text-emerald-600 focus:ring-emerald-300"
                 />
                 Cá nhân hoá từ lịch sử
               </label>
 
-              <Select value={recoSort} onChange={(e) => setRecoSort(e.target.value)}>
+              <Select value={recoFilters.sort} onChange={(e) => setRecoFilter('sort', e.target.value)}>
                 <option value="priority">Ưu tiên</option>
                 <option value="distance">Gần nhất</option>
                 <option value="expiry">Sắp hết hạn</option>
               </Select>
 
-              <Button onClick={fetchRecommendations} className="ml-1">Lấy gợi ý</Button>
+              <Button onClick={fetchRecommendations} disabled={loadingReco} className="ml-1">{loadingReco ? "Đang tải..." : "Lấy gợi ý"}</Button>
             </div>
           </div>
         </div>
@@ -921,14 +766,13 @@ export default function Overview() {
           <div className="p-3 flex items-center gap-2 text-amber-900 bg-amber-50 border border-amber-200 rounded-2xl">
             <AlertTriangle size={18} /> <span>{reco.msg}</span>
           </div>
-        </GradientFrame>
-      ) : reco.items.length > 0 ? (
+        </GradientFrame>      ) : recoDisplayItems.length > 0 ? (
         <>
-          <SectionTitle icon={Sparkles} right={<div className="text-sm text-slate-800">{reco.items.length} mục</div>}>
+          <SectionTitle icon={Sparkles} right={<div className="text-sm text-slate-800">{recoDisplayItems.length} mục</div>}>
             Gợi ý cho bạn
           </SectionTitle>
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-            {reco.items.map((it) => <FoodCard key={it.id || `${it.title}-${Math.random()}`} item={it} />)}
+            {recoDisplayItems.map((it) => <FoodCard key={it.id || `${it.title}-${Math.random()}`} item={it} />)}
           </div>
         </>
       ) : null}
@@ -941,8 +785,8 @@ export default function Overview() {
             <label className="inline-flex items-center gap-2 text-sm cursor-pointer select-none text-slate-900">
               <input
                 type="checkbox"
-                checked={mergeFoods}
-                onChange={() => setMergeFoods(v => !v)}
+                checked={recoFilters.merge}
+                onChange={(e) => setRecoFilter('merge', e.target.checked)}
                 className="h-4 w-4 rounded border-slate-400 text-emerald-600 focus:ring-emerald-300"
               />
               <Merge size={14}/> Gộp món trùng
@@ -956,11 +800,11 @@ export default function Overview() {
         Thực phẩm mới nhất
       </SectionTitle>
 
-      {foodsDisplay.length === 0 ? (
+      {recoDisplayItems.length === 0 ? (
         <Card className="p-8 text-center text-slate-600 mb-8">Chưa có thực phẩm mới.</Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-          {foodsDisplay.map((f) => <FoodCard key={`${f.id}-${f.title}-${f.unit}`} item={f} />)}
+          {recoDisplayItems.slice(0, 6).map((f) => <FoodCard key={`${f.id}-${f.title}-${f.unit}`} item={f} />)}
         </div>
       )}
 

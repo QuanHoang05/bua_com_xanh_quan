@@ -29,7 +29,7 @@ export function AuthProvider({ children }) {
   async function signIn(email, password, remember = false) {
     const data = await apiPost("/api/auth/login", { email, password, remember });
     (remember ? localStorage : sessionStorage).setItem("bua_token", data.token);
-    setUser(data.user);                            // ✅ user là object thực
+    setUser(data.user);                         
     t.success("Đăng nhập thành công");
     nav("/");
     return data;

@@ -8,6 +8,7 @@
     "test": "jest",
     "test:verbose": "jest --verbose",
     "test:report": "jest && echo '\n✅ Báo cáo test đã được tạo tại: test-reports/'",
+    "open:report": "node scripts/open-report.cjs",
     "cypress:run": "cypress run --config-file cypress.config.cjs --config baseUrl=http://localhost:5173 --env API_URL=http://localhost:4000",
     "run-e2e": "node ../scripts/run-e2e.js"
   },

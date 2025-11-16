@@ -10,7 +10,8 @@
     "seed": "node src/seed.js",
     "test:db:reset": "node src/seed_full.js",
     "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --detectOpenHandles",
-    "test:report": "npm test && echo '\n✅ Báo cáo test đã được tạo tại: test-reports/'"
+    "test:report": "npm test && echo '\n✅ Báo cáo test đã được tạo tại: test-reports/'",
+    "open:report": "node scripts/open-report.cjs"
   },
   "dependencies": {
     "helmet": "^7.0.0",

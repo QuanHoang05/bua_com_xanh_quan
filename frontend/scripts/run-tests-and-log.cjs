@@ -12,11 +12,8 @@ else mode = process.env.npm_lifecycle_event || "test";
 const logDir = path.resolve(process.cwd(), "test-logs");
 if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
 
-const fileName =
-  mode === "test:verbose" || mode === "verbose"
-    ? "jest-test-verbose.log"
-    : "jest-test.log";
-const logPath = path.join(logDir, fileName);
+// Always use same log file (overwrite each run)
+const logPath = path.join(logDir, "jest-test.log");
 
 // Build jest args
 const jestArgs =

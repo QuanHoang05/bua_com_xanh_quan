@@ -14,6 +14,8 @@ jobs:
       matrix:
         node-version: [18, 20]
 
+    env:
+      JWT_SECRET: 'test-secret'
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +27,7 @@ jobs:
 
       - name: Install backend deps
         working-directory: ./BuaComXanh/backend
-        run: npm install
+        run: npm ci
 
       - name: Run backend tests
         working-directory: ./BuaComXanh/backend
@@ -42,6 +44,8 @@ jobs:
       matrix:
         node-version: [18, 20]
 
+    env:
+      JWT_SECRET: 'test-secret'
     steps:
       - uses: actions/checkout@v4
 
@@ -53,7 +57,7 @@ jobs:
 
       - name: Install frontend deps
         working-directory: ./BuaComXanh/frontend
-        run: npm install
+        run: npm ci
 
       - name: Run frontend tests
         working-directory: ./BuaComXanh/frontend

@@ -26,11 +26,11 @@ jobs:
           cache: "npm"
 
       - name: Install backend deps
-        working-directory: ./BuaComXanh/backend
+        working-directory: ./backend
         run: npm ci
 
       - name: Run backend tests
-        working-directory: ./BuaComXanh/backend
+        working-directory: ./backend
         run: npm test
 
       - name: Run backend npm audit
@@ -56,11 +56,11 @@ jobs:
           cache: "npm"
 
       - name: Install frontend deps
-        working-directory: ./BuaComXanh/frontend
+        working-directory: ./frontend
         run: npm ci
 
       - name: Run frontend tests
-        working-directory: ./BuaComXanh/frontend
+        working-directory: ./frontend
         run: npm test
 
       - name: Run frontend npm audit

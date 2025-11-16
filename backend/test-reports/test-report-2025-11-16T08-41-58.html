@@ -1,131 +1,4 @@
-// Jest HTML Reporter với Chi Tiết Test Case
-// Hiển thị: Test Case ID, Endpoint, Pre-condition, Input, Expected Result, Environment, Status, Actual Result
 
-const fs = require("fs");
-const path = require("path");
-
-class DetailedHTMLReporter {
-  constructor(globalConfig, options) {
-    this.globalConfig = globalConfig;
-    this.options = options;
-  }
-
-  // Extract endpoint từ test title
-  extractEndpoint(title) {
-    const matches = title.match(/(GET|POST|PUT|PATCH|DELETE)\s+(\S+)/i);
-    if (matches) return `${matches[1]} ${matches[2]}`;
-
-    const pathMatch = title.match(/\/[\w\/\-\:?=&]*/);
-    if (pathMatch) return pathMatch[0];
-
-    return "N/A";
-  }
-
-  // Extract environment từ test description
-  extractEnvironment(suiteName) {
-    if (!suiteName) return "Test Environment";
-    if (suiteName.includes("SQLite") || suiteName.includes("sqlite"))
-      return "SQLite";
-    if (suiteName.includes("MySQL") || suiteName.includes("mysql"))
-      return "MySQL";
-    if (suiteName.includes("Performance")) return "Performance";
-    if (suiteName.includes("Security")) return "Security";
-    return "Test Environment";
-  }
-
-  // Tạo Test Case ID từ suite + index
-  generateTestCaseId(suiteName, index) {
-    const suiteShort = suiteName
-      .replace(".test.js", "")
-      .replace(/([a-z])([A-Z])/g, "$1-$2")
-      .toLowerCase()
-      .substring(0, 3)
-      .toUpperCase();
-
-    return `${suiteShort}-${String(index).padStart(2, "0")}`;
-  }
-
-  onRunComplete(contexts, results) {
-    const reportDir = path.resolve(process.cwd(), "test-reports");
-    if (!fs.existsSync(reportDir)) {
-      fs.mkdirSync(reportDir, { recursive: true });
-    }
-
-    const timestamp = new Date()
-      .toISOString()
-      .replace(/[:.]/g, "-")
-      .slice(0, -5);
-    const reportFile = path.join(reportDir, `test-report-${timestamp}.html`);
-
-    const totalTests = results.numTotalTests;
-    const passedTests = results.numPassedTests;
-    const failedTests = results.numFailedTests;
-    const duration = results.testResults.reduce(
-      (sum, r) => sum + (r.perfStats.end - r.perfStats.start),
-      0
-    );
-
-    let testRows = "";
-    let globalTestIndex = 1;
-
-    // Build detailed table rows
-    (results.testResults || []).forEach((suite) => {
-      const suiteName = suite.name
-        ? path.basename(suite.name)
-        : "Unknown Suite";
-      const environment = this.extractEnvironment(suite.name);
-      const assertionResults = suite.assertionResults || [];
-
-      assertionResults.forEach((assertion, idx) => {
-        const testCaseId = this.generateTestCaseId(suiteName, globalTestIndex);
-        const endpoint = this.extractEndpoint(assertion.title);
-        const status = assertion.status === "passed" ? "Passed" : "Failed";
-        const statusBg = assertion.status === "passed" ? "#d1fae5" : "#fee2e2";
-        const statusColor =
-          assertion.status === "passed" ? "#065f46" : "#991b1b";
-        const statusIcon = assertion.status === "passed" ? "✅" : "❌";
-        const duration = assertion.duration || 0;
-
-        // Extract pre-condition từ test title
-        let precondition = "Admin token provided";
-        if (assertion.title.includes("unauthenticated"))
-          precondition = "No authentication";
-        if (assertion.title.includes("unauthorized"))
-          precondition = "User unauthorized";
-        if (assertion.title.includes("invalid")) precondition = "Invalid input";
-
-        testRows += `
-        <tr>
-          <td class="cell-id">${testCaseId}</td>
-          <td class="cell-endpoint">${endpoint}</td>
-          <td class="cell-precondition">${precondition}</td>
-          <td class="cell-input">
-            <small class="env-badge env-${environment.toLowerCase()}">${environment}</small>
-            Data setup & mocked DB
-          </td>
-          <td class="cell-expected">Status 200, Valid response</td>
-          <td class="cell-env">${environment}</td>
-          <td class="cell-status">
-            <span class="status-badge" style="background-color: ${statusBg}; color: ${statusColor};">
-              ${statusIcon} ${status}
-            </span>
-          </td>
-          <td class="cell-actual">
-            <span class="duration">${duration}ms</span>
-            <span class="test-name">${assertion.title}</span>
-          </td>
-        </tr>`;
-
-        globalTestIndex++;
-      });
-    });
-
-    const passRate =
-      totalTests > 0 ? ((passedTests / totalTests) * 100).toFixed(1) : 0;
-    const failureRate =
-      totalTests > 0 ? ((failedTests / totalTests) * 100).toFixed(1) : 0;
-
-    const html = `
 <!DOCTYPE html>
 <html lang="vi">
 <head>
@@ -520,13 +393,13 @@ class DetailedHTMLReporter {
         <p>Bữa Cơm Xanh - Test Results Report</p>
         <div class="header-meta">
           <div class="meta-item">
-            <span>📅 ${new Date().toLocaleString("vi-VN")}</span>
+            <span>📅 15:41:58 16/11/2025</span>
           </div>
           <div class="meta-item">
-            <span>⏱️ ${(duration / 1000).toFixed(2)}s</span>
+            <span>⏱️ 41.95s</span>
           </div>
           <div class="meta-item">
-            <span>🧪 ${totalTests} tests</span>
+            <span>🧪 210 tests</span>
           </div>
         </div>
       </div>
@@ -535,22 +408,22 @@ class DetailedHTMLReporter {
     <div class="stats-grid">
       <div class="stat-card info">
         <div class="stat-label">Tổng Kiểm Thử</div>
-        <div class="stat-value">${totalTests}</div>
+        <div class="stat-value">210</div>
         <div class="stat-desc">Test cases executed</div>
       </div>
       <div class="stat-card success">
         <div class="stat-label">✅ Thành Công</div>
-        <div class="stat-value">${passedTests}</div>
-        <div class="stat-desc">${passRate}% success rate</div>
+        <div class="stat-value">210</div>
+        <div class="stat-desc">100.0% success rate</div>
       </div>
       <div class="stat-card danger">
         <div class="stat-label">❌ Thất Bại</div>
-        <div class="stat-value">${failedTests}</div>
-        <div class="stat-desc">${failureRate}% failure rate</div>
+        <div class="stat-value">0</div>
+        <div class="stat-desc">0.0% failure rate</div>
       </div>
       <div class="stat-card warning">
         <div class="stat-label">⏱️ Thời Gian</div>
-        <div class="stat-value">${(duration / 1000).toFixed(2)}s</div>
+        <div class="stat-value">41.95s</div>
         <div class="stat-desc">Total execution time</div>
       </div>
     </div>
@@ -560,16 +433,16 @@ class DetailedHTMLReporter {
         <div class="section-title">📈 Tỷ Lệ Thành Công</div>
         <div class="progress-label">
           <span>Progress</span>
-          <span>${passRate}%</span>
+          <span>100.0%</span>
         </div>
         <div class="progress-bar">
-          <div class="progress-fill" style="width: ${passRate}%">
-            ${passRate > 5 ? passRate + "%" : ""}
+          <div class="progress-fill" style="width: 100.0%">
+            100.0%
           </div>
         </div>
         <div style="display: flex; gap: 15px; margin-top: 15px;">
-          <span class="badge badge-pass">✅ Passed: ${passedTests}</span>
-          <span class="badge badge-fail">❌ Failed: ${failedTests}</span>
+          <span class="badge badge-pass">✅ Passed: 210</span>
+          <span class="badge badge-fail">❌ Failed: 0</span>
         </div>
       </div>
 
@@ -589,10 +462,7 @@ class DetailedHTMLReporter {
             </tr>
           </thead>
           <tbody>
-            ${
-              testRows ||
-              '<tr><td colspan="8" style="text-align: center; padding: 30px; color: #9ca3af;">Không có kiểm thử nào</td></tr>'
-            }
+            <tr><td colspan="8" style="text-align: center; padding: 30px; color: #9ca3af;">Không có kiểm thử nào</td></tr>
           </tbody>
         </table>
       </div>
@@ -602,27 +472,27 @@ class DetailedHTMLReporter {
         <div class="summary-grid">
           <div class="summary-item">
             <strong>Ngày Chạy</strong>
-            ${new Date().toLocaleString("vi-VN")}
+            15:41:58 16/11/2025
           </div>
           <div class="summary-item">
             <strong>Tổng Test Cases</strong>
-            ${totalTests}
+            210
           </div>
           <div class="summary-item">
             <strong>Thành Công</strong>
-            ${passedTests} (${passRate}%)
+            210 (100.0%)
           </div>
           <div class="summary-item">
             <strong>Thất Bại</strong>
-            ${failedTests} (${failureRate}%)
+            0 (0.0%)
           </div>
           <div class="summary-item">
             <strong>Thời Gian Thực Thi</strong>
-            ${(duration / 1000).toFixed(2)} giây
+            41.95 giây
           </div>
           <div class="summary-item">
             <strong>Trạng Thái Chung</strong>
-            ${failedTests === 0 ? "✅ Passed All" : "⚠️ Some Failed"}
+            ✅ Passed All
           </div>
         </div>
       </div>
@@ -631,16 +501,9 @@ class DetailedHTMLReporter {
     <div class="footer">
       <p>📊 Báo cáo được tạo tự động bởi Jest HTML Reporter</p>
       <p>🏢 Bữa Cơm Xanh Project - Quality Assurance Report</p>
-      <p style="margin-top: 15px; opacity: 0.7;">Generated: ${new Date().toISOString()}</p>
+      <p style="margin-top: 15px; opacity: 0.7;">Generated: 2025-11-16T08:41:58.833Z</p>
     </div>
   </div>
 </body>
 </html>
-    `;
-
-    fs.writeFileSync(reportFile, html, "utf-8");
-    console.log(`\n✅ Chi tiết báo cáo test đã được tạo: ${reportFile}`);
-  }
-}
-
-module.exports = DetailedHTMLReporter;
+    

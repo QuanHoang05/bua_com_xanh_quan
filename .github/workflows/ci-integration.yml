@@ -39,7 +39,7 @@ jobs:
             ${{ runner.os }}-node-
 
       - name: Install backend dependencies
-        working-directory: BuaComXanh/backend
+        working-directory: BuaComXanh/BuaComXanh/backend
         run: npm ci
 
       - name: Wait for MySQL to be ready
@@ -62,12 +62,12 @@ jobs:
           echo "DB_NAME=test_db" >> $GITHUB_ENV
 
       - name: Seed MySQL (backend)
-        working-directory: BuaComXanh/backend
+        working-directory: BuaComXanh/BuaComXanh/backend
         run: |
           node src/seed_mysql.js || true
 
       - name: Run integration tests (Jest)
-        working-directory: BuaComXanh/backend
+        working-directory: BuaComXanh/BuaComXanh/backend
         run: |
           npm run test:integration:jest --silent || true
 
@@ -77,8 +77,8 @@ jobs:
         with:
           name: integration-test-report
           path: |
-            BuaComXanh/backend/test-report.html
-            BuaComXanh/backend/test-reports/**
+            BuaComXanh/BuaComXanh/backend/test-report.html
+            BuaComXanh/BuaComXanh/backend/test-reports/**
 
       - name: Upload test logs
         if: always()
@@ -86,5 +86,5 @@ jobs:
         with:
           name: integration-test-logs
           path: |
-            BuaComXanh/backend/test-logs/**
-            BuaComXanh/backend/IntegrationTest/errorIntegration.md
+            BuaComXanh/BuaComXanh/backend/test-logs/**
+            BuaComXanh/BuaComXanh/backend/IntegrationTest/errorIntegration.md

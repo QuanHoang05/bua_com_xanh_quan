@@ -1,0 +1,90 @@
+name: CI - Integration Tests (MySQL)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpass
+          MYSQL_DATABASE: test_db
+        options: >-
+          --health-cmd="mysqladmin ping --silent"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+        ports:
+          - 3306:3306
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Cache node modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            **/node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - name: Install backend dependencies
+        working-directory: BuaComXanh/backend
+        run: npm ci
+
+      - name: Wait for MySQL to be ready
+        run: |
+          echo "Waiting for MySQL service..."
+          for i in {1..30}; do
+            if mysqladmin ping -h 127.0.0.1 -prootpass --silent; then
+              echo "MySQL is up"; break
+            fi
+            echo "Waiting... ($i)"; sleep 2
+          done
+
+      - name: Set DB env for integration
+        run: |
+          echo "DB_DRIVER=mysql" >> $GITHUB_ENV
+          echo "DB_HOST=127.0.0.1" >> $GITHUB_ENV
+          echo "DB_PORT=3306" >> $GITHUB_ENV
+          echo "DB_USER=root" >> $GITHUB_ENV
+          echo "DB_PASSWORD=rootpass" >> $GITHUB_ENV
+          echo "DB_NAME=test_db" >> $GITHUB_ENV
+
+      - name: Seed MySQL (backend)
+        working-directory: BuaComXanh/backend
+        run: |
+          node src/seed_mysql.js || true
+
+      - name: Run integration tests
+        working-directory: BuaComXanh/backend
+        run: |
+          npm run test:integration --silent || true
+
+      - name: Upload test report HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-report
+          path: |
+            BuaComXanh/backend/test-report.html
+            BuaComXanh/backend/test-reports/**
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-logs
+          path: |
+            BuaComXanh/backend/test-logs/**
+            BuaComXanh/backend/IntegrationTest/errorIntegration.md

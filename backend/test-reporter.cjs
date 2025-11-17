@@ -176,6 +176,57 @@ class DetailedHTMLReporter {
     const failureRate =
       totalTests > 0 ? ((failedTests / totalTests) * 100).toFixed(1) : 0;
 
+    // Prepare test result summary
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+
+    // Read the current test log file
+    const logDir = path.resolve(process.cwd(), "test-logs");
+    let shortLogHtml = "";
+
+    // Try to read log file - check both backend and frontend possible locations
+    // For backend: npm-test.log, for frontend: jest-test.log
+    const logFile = path.join(
+      logDir,
+      fs.existsSync(path.join(logDir, "npm-test.log"))
+        ? "npm-test.log"
+        : "jest-test.log"
+    );
+
+    if (fs.existsSync(logFile)) {
+      try {
+        const logContent = fs.readFileSync(logFile, "utf-8");
+        shortLogHtml = escapeHtml(logContent).substring(0, 10000);
+      } catch (e) {
+        shortLogHtml = "Error reading log file: " + e.message;
+      }
+    } else {
+      // Fallback: build summary from test results if no log file found
+      shortLogHtml = (results.testResults || [])
+        .map((suite) => {
+          const suitePath = suite.name
+            ? suite.name.replace(process.cwd(), "")
+            : "Unknown";
+          const assertions = (suite.assertionResults || [])
+            .map(
+              (a) =>
+                `  ${a.status === "passed" ? "✓" : "✗"} ${a.title} (${
+                  a.duration || 0
+                }ms)`
+            )
+            .join("\n");
+          return `${suitePath}\n${assertions}`;
+        })
+        .join("\n\n");
+      shortLogHtml = escapeHtml(shortLogHtml).substring(0, 10000);
+    }
+
+    const shortLogHtmlEscaped = shortLogHtml;
+
     const html = `
 <!DOCTYPE html>
 <html lang="vi">
@@ -624,38 +675,9 @@ class DetailedHTMLReporter {
         </div>
       </div>
 
-      <div class="section-title">📋 Jest Test Output Log</div>
-      <div style="background:#f5f5f5;padding:15px;border-radius:8px;border-left:4px solid #667eea;overflow-x:auto;max-height:600px;overflow-y:auto;">
-        <pre style="margin:0;font-family:monospace;font-size:0.85em;color:#333;white-space:pre-wrap;word-break:break-word;"><![CDATA[${(() => {
-          const logDir = path.resolve(process.cwd(), "test-logs");
-          const logFile = path.join(logDir, "npm-test.log");
-          if (fs.existsSync(logFile)) {
-            try {
-              let logContent = fs.readFileSync(logFile, "utf-8");
-              return logContent.substring(0, 5000); // Limit to 5000 chars
-            } catch (e) {
-              return "Error reading log file: " + e.message;
-            }
-          }
-
-          // Fallback to detailed test results if log file doesn't exist
-          return (results.testResults || [])
-            .map((suite) => {
-              const suitePath = suite.name
-                ? suite.name.replace(process.cwd(), "")
-                : "Unknown";
-              const assertions = (suite.assertionResults || [])
-                .map(
-                  (a) =>
-                    `  ${a.status === "passed" ? "✓" : "✗"} ${a.title} (${
-                      a.duration || 0
-                    }ms)`
-                )
-                .join("\n");
-              return `${suitePath}\n${assertions}`;
-            })
-            .join("\n\n");
-        })()}]]></pre>
+      <div class="section-title">📋 Kết quả</div>
+      <div style="background:#f5f5f5;padding:15px;border-radius:8px;border-left:4px solid #667eea;overflow-x:auto;max-height:400px;overflow-y:auto;">
+        <pre style="margin:0;font-family:monospace;font-size:0.85em;color:#333;white-space:pre-wrap;word-break:break-word;">${shortLogHtmlEscaped}</pre>
       </div>
 
       <div class="summary">
@@ -687,21 +709,14 @@ class DetailedHTMLReporter {
           </div>
         </div>
       </div>
-      ${
-        failuresHtml
-          ? `
-      <div style="margin-top:24px;">
-        <div class="section-title">⚠️ Lỗi Chi Tiết (Failures)</div>
-        <div style="margin-top:12px;">${failuresHtml}</div>
-      </div>`
-          : ""
-      }
     </div>
 
     <div class="footer">
-      <p>📊 Báo cáo được tạo tự động bởi Jest HTML Reporter</p>
-      <p>🏢 Bữa Cơm Xanh Project - Quality Assurance Report</p>
-      <p style="margin-top: 15px; opacity: 0.7;">Generated: ${new Date().toISOString()}</p>
+      <p>📊 Báo cáo kiểm thử - Kết quả test</p>
+      <p>🏢 Bữa Cơm Xanh - QA Report</p>
+      <p style="margin-top: 15px; opacity: 0.85;">Generated: ${new Date().toLocaleString(
+        "vi-VN"
+      )}</p>
     </div>
   </div>
 </body>
@@ -709,32 +724,6 @@ class DetailedHTMLReporter {
     `;
 
     fs.writeFileSync(reportFile, html, "utf-8");
-    // Also include the test run logs (npm test or npm run test:verbose) if present
-    try {
-      const logDir = path.resolve(process.cwd(), "test-logs");
-      const verboseLog = path.join(logDir, "npm-test-verbose.log");
-      const normalLog = path.join(logDir, "npm-test.log");
-      let selectedLog = null;
-      if (fs.existsSync(verboseLog)) selectedLog = verboseLog;
-      else if (fs.existsSync(normalLog)) selectedLog = normalLog;
-
-      if (selectedLog) {
-        const logContent = fs.readFileSync(selectedLog, "utf-8");
-        const safeLog = logContent
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\n/g, "<br/>");
-
-        // Append a simple log section to the report
-        const logSection =
-          `\n\n<!-- TEST LOG START -->\n<section style="padding:20px;background:#0f172a;color:#e6edf3;">` +
-          `<h2 style="color:#fff">🧾 Test Run Log</h2><pre style="white-space:pre-wrap;word-break:break-word;background:#071029;padding:12px;border-radius:8px;color:#e6edf3;">${safeLog}</pre></section>\n<!-- TEST LOG END -->\n`;
-
-        fs.appendFileSync(reportFile, logSection, "utf-8");
-      }
-    } catch (e) {
-      // silently ignore logging issues
-    }
 
     console.log(`\n✅ Chi tiết báo cáo test đã được tạo: ${reportFile}`);
 

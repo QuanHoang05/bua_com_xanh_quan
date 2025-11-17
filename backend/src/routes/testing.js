@@ -22,10 +22,16 @@ router.post("/reset", async (_req, res) => {
 
   try {
     console.log("[TESTING] Resetting database...");
-    // Call npm script to ensure proper environment setup and Node path resolution.
-    const { stdout, stderr } = await execAsync("npm run test:db:reset");
-    console.log("[TESTING] Database reset stdout:", stdout);
-    if (stderr) console.error("[TESTING] Database reset stderr:", stderr);
+    // If using MySQL, run the MySQL seed script; otherwise run the default seed_full.js
+    if ((process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql") {
+      const { stdout, stderr } = await execAsync("node src/seed_mysql.js");
+      console.log("[TESTING] MySQL seed stdout:", stdout);
+      if (stderr) console.error("[TESTING] MySQL seed stderr:", stderr);
+    } else {
+      const { stdout, stderr } = await execAsync("node src/seed_full.js");
+      console.log("[TESTING] Seed stdout:", stdout);
+      if (stderr) console.error("[TESTING] Seed stderr:", stderr);
+    }
     res
       .status(200)
       .json({ message: "Database reset and seeded successfully." });

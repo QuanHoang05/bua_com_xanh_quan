@@ -11,21 +11,30 @@ import "dotenv/config";
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
 if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+else ({ db } = await import("../lib/db.js"));
 
 const router = Router();
 
 /* ---------------- DB helpers ---------------- */
 async function dbGet(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbAll(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 async function dbRun(sql, params = []) {
-  if (useMySQL) { const [r] = await db.query(sql, params); return r; }
+  if (useMySQL) {
+    const [r] = await db.query(sql, params);
+    return r;
+  }
   return db.prepare(sql).run(...params);
 }
 
@@ -34,14 +43,25 @@ const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const toNum = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const MEAL_PRICE_VND = toNum(process.env.MEAL_PRICE_VND, 10000);
 function parseJson(raw, fallback = {}) {
-  try { return raw == null || raw === "" ? fallback : (typeof raw === "string" ? JSON.parse(raw) : raw); }
-  catch { return fallback; }
+  try {
+    return raw == null || raw === ""
+      ? fallback
+      : typeof raw === "string"
+      ? JSON.parse(raw)
+      : raw;
+  } catch {
+    return fallback;
+  }
 }
 function normalizeTags(raw) {
   if (!raw) return [];
   if (Array.isArray(raw)) return raw;
-  try { const v = typeof raw === "string" ? JSON.parse(raw) : raw; return Array.isArray(v) ? v : []; }
-  catch { return []; }
+  try {
+    const v = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
 }
 const monthExpr = useMySQL
   ? "DATE_FORMAT(COALESCE(paid_at,created_at),'%Y-%m')"
@@ -49,10 +69,14 @@ const monthExpr = useMySQL
 
 /* ---------------- Aggregation columns (subqueries) ---------------- */
 const AGG = {
-  raisedMoney: "(SELECT COALESCE(SUM(CASE WHEN d.status='success' AND d.amount>0 THEN d.amount ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
-  supporters:  "(SELECT COUNT(*) FROM donations d WHERE d.campaign_id=c.id AND d.status='success')",
-  mealQty:     "(SELECT COALESCE(SUM(CASE WHEN d.status='success' AND d.qty>0 THEN d.qty ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
-  pledgedQty:  "(SELECT COALESCE(SUM(CASE WHEN d.status IN ('pledged','scheduled') AND d.qty>0 THEN d.qty ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
+  raisedMoney:
+    "(SELECT COALESCE(SUM(CASE WHEN d.status='success' AND d.amount>0 THEN d.amount ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
+  supporters:
+    "(SELECT COUNT(*) FROM donations d WHERE d.campaign_id=c.id AND d.status='success')",
+  mealQty:
+    "(SELECT COALESCE(SUM(CASE WHEN d.status='success' AND d.qty>0 THEN d.qty ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
+  pledgedQty:
+    "(SELECT COALESCE(SUM(CASE WHEN d.status IN ('pledged','scheduled') AND d.qty>0 THEN d.qty ELSE 0 END),0) FROM donations d WHERE d.campaign_id=c.id)",
 };
 
 /* ---------------- Calculations ---------------- */
@@ -67,21 +91,29 @@ function mapCampaignRow(r) {
   const type = (r.type || meta?.type || "money").toLowerCase();
   const cover_url = r.cover_url || r.cover || "";
 
-  const raised_money_calc   = toNum(r.raised_money_calc, 0);
-  const supporters_calc     = toNum(r.supporters_calc, 0);
-  const meal_qty_calc       = toNum(r.meal_qty_calc, 0);
-  const meal_pledged_calc   = toNum(r.meal_pledged_qty_calc, 0);
+  const raised_money_calc = toNum(r.raised_money_calc, 0);
+  const supporters_calc = toNum(r.supporters_calc, 0);
+  const meal_qty_calc = toNum(r.meal_qty_calc, 0);
+  const meal_pledged_calc = toNum(r.meal_pledged_qty_calc, 0);
 
-  const configured_price = toNum(r.meal_price ?? meta?.meal?.price, MEAL_PRICE_VND);
-  const derived_meals    = computeMealsFrom(raised_money_calc, meal_qty_calc, configured_price);
+  const configured_price = toNum(
+    r.meal_price ?? meta?.meal?.price,
+    MEAL_PRICE_VND
+  );
+  const derived_meals = computeMealsFrom(
+    raised_money_calc,
+    meal_qty_calc,
+    configured_price
+  );
 
   // prefer cached columns when present; fall back to calculated
-  const raised_amount = toNum(r.raised_amount ?? r.raised, 0) || raised_money_calc;
-  const supporters    = toNum(r.supporters, 0) || supporters_calc;
+  const raised_amount =
+    toNum(r.raised_amount ?? r.raised, 0) || raised_money_calc;
+  const supporters = toNum(r.supporters, 0) || supporters_calc;
 
   // received meals: if column exists and >0 (MySQL dump có), dùng; SQLite tính động
   const meal_received_qty = useMySQL
-    ? (toNum(r.meal_received_qty, 0) || derived_meals)
+    ? toNum(r.meal_received_qty, 0) || derived_meals
     : derived_meals;
 
   return {
@@ -121,28 +153,38 @@ function mapCampaignRow(r) {
 /* ======================= GET /api/campaigns ======================= */
 router.get("/", async (req, res) => {
   try {
-    const q       = String(req.query.q || "").trim();
-    const status  = String(req.query.status || "active").toLowerCase();
-    const sort    = String(req.query.sort || "latest").toLowerCase();
-    const typeF   = String(req.query.type || "").toLowerCase();
+    const q = String(req.query.q || "").trim();
+    const status = String(req.query.status || "active").toLowerCase();
+    const sort = String(req.query.sort || "latest").toLowerCase();
+    const typeF = String(req.query.type || "").toLowerCase();
 
-    const page     = clamp(parseInt(req.query.page) || 1, 1, 1e9);
+    const page = clamp(parseInt(req.query.page) || 1, 1, 1e9);
     const pageSize = clamp(parseInt(req.query.pageSize) || 24, 1, 1000);
-    const offset   = (page - 1) * pageSize;
+    const offset = (page - 1) * pageSize;
 
     const where = [];
     const p = [];
-    if (q) { where.push("(c.title LIKE ? OR c.description LIKE ? OR c.location LIKE ?)"); p.push(`%${q}%`,`%${q}%`,`%${q}%`); }
-    if (status !== "all") { where.push("c.status=?"); p.push(status); }
+    if (q) {
+      where.push(
+        "(c.title LIKE ? OR c.description LIKE ? OR c.location LIKE ?)"
+      );
+      p.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (status !== "all") {
+      where.push("c.status=?");
+      p.push(status);
+    }
     const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
     let orderSQL = "c.created_at DESC";
     if (sort === "progress") {
-      orderSQL = "CASE WHEN c.goal>0 THEN ((raised_money_calc*1.0)/c.goal) ELSE 0 END DESC, c.created_at DESC";
+      orderSQL =
+        "CASE WHEN c.goal>0 THEN ((raised_money_calc*1.0)/c.goal) ELSE 0 END DESC, c.created_at DESC";
     } else if (sort === "goal") {
       orderSQL = "c.goal DESC, c.created_at DESC";
     } else if (sort === "endSoon") {
-      orderSQL = "CASE WHEN c.deadline IS NULL THEN 1 ELSE 0 END ASC, c.deadline ASC, c.created_at DESC";
+      orderSQL =
+        "CASE WHEN c.deadline IS NULL THEN 1 ELSE 0 END ASC, c.deadline ASC, c.created_at DESC";
     }
 
     // inline LIMIT/OFFSET to avoid placeholder issue
@@ -160,16 +202,27 @@ router.get("/", async (req, res) => {
       ORDER BY ${orderSQL}
       LIMIT ${pageSize} OFFSET ${offset}
     `;
-    const totalRow = await dbGet(`SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`, p);
+    const totalRow = await dbGet(
+      `SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`,
+      p
+    );
     const rows = await dbAll(listSQL, p);
 
     let items = rows.map(mapCampaignRow);
-    if (typeF) items = items.filter(it => (it.type || "money") === typeF);
+    if (typeF) items = items.filter((it) => (it.type || "money") === typeF);
 
-    res.json({ ok: true, items, total: toNum(totalRow?.total, 0), page, pageSize });
+    res.json({
+      ok: true,
+      items,
+      total: toNum(totalRow?.total, 0),
+      page,
+      pageSize,
+    });
   } catch (e) {
     console.error("[GET /campaigns] ", e);
-    res.status(500).json({ ok: false, message: "Không lấy được danh sách chiến dịch" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không lấy được danh sách chiến dịch" });
   }
 });
 
@@ -196,11 +249,20 @@ router.get("/stats", async (_req, res) => {
     let meals_pledged_total = 0;
 
     for (const r of rows) {
-      const price = toNum(r.meal_price ?? parseJson(r.meta, {})?.meal?.price, MEAL_PRICE_VND);
-      const derived = computeMealsFrom(r.raised_money_calc, r.meal_qty_calc, price);
-      const received = useMySQL ? (toNum(r.meal_received_qty, 0) || derived) : derived;
+      const price = toNum(
+        r.meal_price ?? parseJson(r.meta, {})?.meal?.price,
+        MEAL_PRICE_VND
+      );
+      const derived = computeMealsFrom(
+        r.raised_money_calc,
+        r.meal_qty_calc,
+        price
+      );
+      const received = useMySQL
+        ? toNum(r.meal_received_qty, 0) || derived
+        : derived;
       meals_received_total += received;
-      meals_pledged_total  += toNum(r.meal_pledged_qty_calc, 0);
+      meals_pledged_total += toNum(r.meal_pledged_qty_calc, 0);
     }
 
     res.json({
@@ -223,7 +285,8 @@ router.get("/stats", async (_req, res) => {
 router.get("/:id", async (req, res) => {
   try {
     const id = req.params.id;
-    const row = await dbGet(`
+    const row = await dbGet(
+      `
       SELECT
         c.id, c.title, c.description, c.location, c.goal, c.type,
         c.cover, c.cover_url, c.tags, c.meta, c.status, c.created_at, c.updated_at, c.deadline,
@@ -234,8 +297,13 @@ router.get("/:id", async (req, res) => {
         ${AGG.pledgedQty}   AS meal_pledged_qty_calc
       FROM campaigns c
       WHERE c.id=?
-    `, [id]);
-    if (!row) return res.status(404).json({ ok: false, message: "Không tìm thấy chiến dịch" });
+    `,
+      [id]
+    );
+    if (!row)
+      return res
+        .status(404)
+        .json({ ok: false, message: "Không tìm thấy chiến dịch" });
     res.json({ ok: true, ...mapCampaignRow(row) });
   } catch (e) {
     console.error("[GET /campaigns/:id] ", e);
@@ -256,7 +324,7 @@ router.get("/:id/donations", async (req, res) => {
       `,
       [req.params.id]
     );
-    const safe = items.map(it => ({
+    const safe = items.map((it) => ({
       id: it.id,
       type: it.type || (toNum(it.qty, 0) > 0 ? "food" : "money"),
       amount: toNum(it.amount, 0),
@@ -270,7 +338,9 @@ router.get("/:id/donations", async (req, res) => {
     res.json({ ok: true, items: safe });
   } catch (e) {
     console.error("[GET /campaigns/:id/donations] ", e);
-    res.status(500).json({ ok: false, message: "Không lấy được danh sách ủng hộ" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không lấy được danh sách ủng hộ" });
   }
 });
 
@@ -289,8 +359,9 @@ router.get("/:id/pledges", async (req, res) => {
       `,
       [req.params.id]
     );
-    const safe = items.map(it => ({
-      id: it.id, type: it.type || "food",
+    const safe = items.map((it) => ({
+      id: it.id,
+      type: it.type || "food",
       qty: toNum(it.qty, 0),
       donor_name: it.donor_name || "Ẩn danh",
       donor_note: it.donor_note || "",
@@ -302,7 +373,9 @@ router.get("/:id/pledges", async (req, res) => {
     res.json({ ok: true, items: safe });
   } catch (e) {
     console.error("[GET /campaigns/:id/pledges] ", e);
-    res.status(500).json({ ok: false, message: "Không lấy được danh sách pledge" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không lấy được danh sách pledge" });
   }
 });
 
@@ -310,7 +383,8 @@ router.get("/:id/pledges", async (req, res) => {
 router.get("/:id/reports", async (req, res) => {
   try {
     const id = req.params.id;
-    const row = await dbGet(`
+    const row = await dbGet(
+      `
       SELECT
         c.id, c.title, c.description, c.location, c.goal, c.type,
         c.cover, c.cover_url, c.tags, c.meta, c.status, c.created_at, c.updated_at, c.deadline,
@@ -319,8 +393,13 @@ router.get("/:id/reports", async (req, res) => {
         ${AGG.supporters}   AS supporters_calc,
         ${AGG.mealQty}      AS meal_qty_calc,
         ${AGG.pledgedQty}   AS meal_pledged_qty_calc
-      FROM campaigns c WHERE c.id=?`, [id]);
-    if (!row) return res.status(404).json({ ok: false, message: "Không tìm thấy chiến dịch" });
+      FROM campaigns c WHERE c.id=?`,
+      [id]
+    );
+    if (!row)
+      return res
+        .status(404)
+        .json({ ok: false, message: "Không tìm thấy chiến dịch" });
 
     const byMonth = await dbAll(
       `
@@ -336,7 +415,10 @@ router.get("/:id/reports", async (req, res) => {
     res.json({
       ok: true,
       campaign: mapCampaignRow(row),
-      donationsByMonth: byMonth.map(d => ({ month: d.month, total: toNum(d.total, 0) })),
+      donationsByMonth: byMonth.map((d) => ({
+        month: d.month,
+        total: toNum(d.total, 0),
+      })),
     });
   } catch (e) {
     console.error("[GET /campaigns/:id/reports] ", e);
@@ -362,9 +444,8 @@ router.get("/active", async (req, res) => {
       WHERE c.status='active'
       ORDER BY c.updated_at DESC
       LIMIT ${limit}
-    `
-    );
-    const items = rows.map(r => {
+    `);
+    const items = rows.map((r) => {
       const m = mapCampaignRow(r);
       return {
         id: m.id,
@@ -396,57 +477,80 @@ router.get("/active", async (req, res) => {
  */
 router.post("/:id/donations", async (req, res) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return res.status(400).json({ ok:false, message:"campaign_id không hợp lệ" });
+    const id = req.params.id;
+    if (!id)
+      return res
+        .status(400)
+        .json({ ok: false, message: "campaign_id không hợp lệ" });
 
     const camp = await dbGet(
       "SELECT id, meta, meal_price, target_amount, raised_amount FROM campaigns WHERE id=?",
       [id]
     );
-    if (!camp) return res.status(404).json({ ok:false, message:"Chiến dịch không tồn tại" });
+    if (!camp)
+      return res
+        .status(404)
+        .json({ ok: false, message: "Chiến dịch không tồn tại" });
 
     const meta = parseJson(camp.meta, {});
     const payCfg = meta?.payment || {};
 
     // ---- input từ form "Đăng ký gửi"
     const {
-      donor_name, donor_note, memo,
-      amount, currency,   // money
-      qty, unit,          // meal/in-kind
-      pickup_point_id, in_kind, user_location, paid_at,
+      donor_name,
+      donor_note,
+      memo,
+      amount,
+      currency, // money
+      qty,
+      unit, // meal/in-kind
+      pickup_point_id,
+      in_kind,
+      user_location,
+      paid_at,
     } = req.body || {};
 
-    const qtyVal    = toNum(qty, 0);
+    const qtyVal = toNum(qty, 0);
     const amountVal = toNum(amount, 0);
     const cur = (currency || "VND").toUpperCase().slice(0, 8);
 
-    const donorName = (donor_name || "").toString().trim().slice(0,120) || "Ẩn danh";
-    const donorNote = (donor_note || "").toString().trim().slice(0,500);
+    const donorName =
+      (donor_name || "").toString().trim().slice(0, 120) || "Ẩn danh";
+    const donorNote = (donor_note || "").toString().trim().slice(0, 500);
 
     const memoBits = [];
     if (pickup_point_id) memoBits.push(`pickup_point=${pickup_point_id}`);
-    if (user_location?.lat != null && user_location?.lng != null) memoBits.push(`lat=${user_location.lat},lng=${user_location.lng}`);
+    if (user_location?.lat != null && user_location?.lng != null)
+      memoBits.push(`lat=${user_location.lat},lng=${user_location.lng}`);
     if (unit) memoBits.push(`unit=${unit}`);
     if (in_kind) memoBits.push("IN_KIND");
-    if (memo) memoBits.push(String(memo).slice(0,600));
+    if (memo) memoBits.push(String(memo).slice(0, 600));
     const finalMemo = memoBits.join(" | ").slice(0, 1000);
 
     const nowSQL = useMySQL ? "NOW()" : "CURRENT_TIMESTAMP";
     const paidDt = paid_at ? new Date(paid_at) : null;
-    const paidSQL = paidDt && !isNaN(paidDt) ? paidDt.toISOString().slice(0,19).replace("T"," ") : null;
+    const paidSQL =
+      paidDt && !isNaN(paidDt)
+        ? paidDt.toISOString().slice(0, 19).replace("T", " ")
+        : null;
 
     // ---- Phân nhánh ý định
     let kind = null; // 'meal' | 'money'
     if (qtyVal > 0 && amountVal <= 0) kind = "meal";
     else if (amountVal > 0 && qtyVal <= 0) kind = "money";
     else {
-      return res.status(400).json({ ok:false, message:"Cần truyền *hoặc* qty>0 (in-kind) *hoặc* amount>0 (money)" });
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "Cần truyền *hoặc* qty>0 (in-kind) *hoặc* amount>0 (money)",
+        });
     }
 
     // ---- Insert donation
-    const insertType   = kind === "meal" ? "food" : "money";
+    const insertType = kind === "meal" ? "food" : "money";
     const insertAmount = kind === "money" ? amountVal : 0;
-    const insertQty    = kind === "meal" ? qtyVal : 0;
+    const insertQty = kind === "meal" ? qtyVal : 0;
     const insertStatus = kind === "meal" ? "pledged" : "pending"; // meal -> admin duyệt, money -> chờ IPN
 
     await dbRun(
@@ -456,7 +560,18 @@ router.post("/:id/donations", async (req, res) => {
       VALUES
         ('', ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ${nowSQL}, ?)
       `,
-      [ id, insertType, insertAmount, insertQty, cur, donorName, donorNote, finalMemo, insertStatus, paidSQL ]
+      [
+        id,
+        insertType,
+        insertAmount,
+        insertQty,
+        cur,
+        donorName,
+        donorNote,
+        finalMemo,
+        insertStatus,
+        paidSQL,
+      ]
     );
 
     // ---- Chuẩn bị next_action cho FE
@@ -478,15 +593,23 @@ router.post("/:id/donations", async (req, res) => {
         const account = payCfg?.account || "";
         const name = payCfg?.name || "";
         const memoQR = payCfg?.memo || donorName;
-        const qr_url = `https://img.vietqr.io/image/${encodeURIComponent(bank)}-${encodeURIComponent(account)}-qr_only.png?amount=${amountVal}&accountName=${encodeURIComponent(name)}&addInfo=${encodeURIComponent(memoQR)}`;
+        const qr_url = `https://img.vietqr.io/image/${encodeURIComponent(
+          bank
+        )}-${encodeURIComponent(
+          account
+        )}-qr_only.png?amount=${amountVal}&accountName=${encodeURIComponent(
+          name
+        )}&addInfo=${encodeURIComponent(memoQR)}`;
         next_action = {
           type: "pay",
           method: "vietqr",
           qr_url,
-          bank, account, name,
+          bank,
+          account,
+          name,
           currency: cur,
           amount: amountVal,
-          memo: memoQR
+          memo: memoQR,
         };
       } else if (method === "custom_qr" && payCfg?.qr_url) {
         next_action = {
@@ -495,43 +618,73 @@ router.post("/:id/donations", async (req, res) => {
           qr_url: payCfg.qr_url,
           currency: cur,
           amount: amountVal,
-          memo: payCfg?.memo || ""
+          memo: payCfg?.memo || "",
         };
       } else {
-        next_action = { type: "info", message: "Đã tạo yêu cầu ủng hộ tiền (pending). Kênh thanh toán chưa được cấu hình." };
+        next_action = {
+          type: "info",
+          message:
+            "Đã tạo yêu cầu ủng hộ tiền (pending). Kênh thanh toán chưa được cấu hình.",
+        };
       }
     } else {
       next_action = {
         type: "await_approval",
-        message: "Đã ghi nhận đăng ký gửi bữa. Quản trị viên sẽ duyệt và liên hệ nếu cần."
+        message:
+          "Đã ghi nhận đăng ký gửi bữa. Quản trị viên sẽ duyệt và liên hệ nếu cần.",
       };
     }
 
-    return res.json({ ok:true, kind, next_action });
+    return res.json({ ok: true, kind, next_action });
   } catch (e) {
     console.error("[POST /campaigns/:id/donations] ", e);
-    res.status(500).json({ ok:false, message:"Không tạo được donation" });
+    res.status(500).json({ ok: false, message: "Không tạo được donation" });
   }
 });
 
 /* ====================== Legacy fallback (in-kind) ====================== */
 router.post("/meals/donate", async (req, res) => {
   try {
-    const { campaign_id, servings, pickup_point_id, in_kind, user_location, contact_name, contact_phone, contact_note } = req.body || {};
-    const exist = await dbGet("SELECT id FROM campaigns WHERE id=?", [campaign_id]);
-    if (!exist) return res.status(404).json({ ok: false, message: "Chiến dịch không tồn tại" });
+    const {
+      campaign_id,
+      servings,
+      pickup_point_id,
+      in_kind,
+      user_location,
+      contact_name,
+      contact_phone,
+      contact_note,
+    } = req.body || {};
+    const exist = await dbGet("SELECT id FROM campaigns WHERE id=?", [
+      campaign_id,
+    ]);
+    if (!exist)
+      return res
+        .status(404)
+        .json({ ok: false, message: "Chiến dịch không tồn tại" });
 
     const qtyVal = toNum(servings, 0);
-    if (!in_kind || qtyVal <= 0) return res.status(400).json({ ok:false, message:"Yêu cầu không hợp lệ (in_kind + servings > 0)" });
+    if (!in_kind || qtyVal <= 0)
+      return res
+        .status(400)
+        .json({
+          ok: false,
+          message: "Yêu cầu không hợp lệ (in_kind + servings > 0)",
+        });
 
-    const donorName = (contact_name || "").toString().trim().slice(0,120) || "Ẩn danh";
-    const donorNote = (contact_note || "").toString().trim().slice(0,500);
+    const donorName =
+      (contact_name || "").toString().trim().slice(0, 120) || "Ẩn danh";
+    const donorNote = (contact_note || "").toString().trim().slice(0, 500);
     const bits = [
       "IN_KIND",
       pickup_point_id ? `pickup_point=${pickup_point_id}` : null,
       contact_phone ? `phone=${contact_phone}` : null,
-      user_location?.lat != null && user_location?.lng != null ? `lat=${user_location.lat},lng=${user_location.lng}` : null,
-    ].filter(Boolean).join(" | ");
+      user_location?.lat != null && user_location?.lng != null
+        ? `lat=${user_location.lat},lng=${user_location.lng}`
+        : null,
+    ]
+      .filter(Boolean)
+      .join(" | ");
 
     const nowSQL = useMySQL ? "NOW()" : "CURRENT_TIMESTAMP";
     await dbRun(
@@ -541,13 +694,15 @@ router.post("/meals/donate", async (req, res) => {
       VALUES
         ('', ?, NULL, 'food', 0, ?, 'VND', ?, ?, ?, 'pledged', ${nowSQL}, NULL)
       `,
-      [ campaign_id, qtyVal, donorName, donorNote, bits ]
+      [campaign_id, qtyVal, donorName, donorNote, bits]
     );
 
     res.json({ ok: true });
   } catch (e) {
     console.error("[POST /campaigns/meals/donate] ", e);
-    res.status(500).json({ ok: false, message: "Không tạo được đăng ký gửi bữa" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không tạo được đăng ký gửi bữa" });
   }
 });
 
@@ -555,11 +710,14 @@ router.post("/meals/donate", async (req, res) => {
 router.post("/:id/recalc", async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return res.status(400).json({ ok:false, message:"campaign_id không hợp lệ" });
+    if (!Number.isFinite(id))
+      return res
+        .status(400)
+        .json({ ok: false, message: "campaign_id không hợp lệ" });
 
     if (useMySQL) {
       await dbRun("CALL recalc_campaign(?)", [id]);
-      return res.json({ ok:true, message:"Đã chạy recalc_campaign()" });
+      return res.json({ ok: true, message: "Đã chạy recalc_campaign()" });
     }
 
     // SQLite: tự tính
@@ -568,22 +726,37 @@ router.post("/:id/recalc", async (req, res) => {
          COALESCE(SUM(CASE WHEN status='success' AND amount>0 THEN amount ELSE 0 END),0) AS money,
          COALESCE(SUM(CASE WHEN status='success' AND qty>0 THEN qty ELSE 0 END),0) AS qty,
          COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END),0) AS supporters
-       FROM donations WHERE campaign_id=?`, [id]
+       FROM donations WHERE campaign_id=?`,
+      [id]
     );
-    const cfg = await dbGet("SELECT meal_price, meta FROM campaigns WHERE id=?", [id]);
-    const price = toNum(cfg?.meal_price ?? parseJson(cfg?.meta, {})?.meal?.price, MEAL_PRICE_VND);
+    const cfg = await dbGet(
+      "SELECT meal_price, meta FROM campaigns WHERE id=?",
+      [id]
+    );
+    const price = toNum(
+      cfg?.meal_price ?? parseJson(cfg?.meta, {})?.meal?.price,
+      MEAL_PRICE_VND
+    );
     const meals = computeMealsFrom(row?.money || 0, row?.qty || 0, price);
 
     await dbRun(
       `UPDATE campaigns
-         SET raised=?, raised_amount=?, supporters=?, meal_received_qty=?, updated_at=${useMySQL?"NOW()":"datetime('now')"}
+         SET raised=?, raised_amount=?, supporters=?, meal_received_qty=?, updated_at=${
+           useMySQL ? "NOW()" : "datetime('now')"
+         }
        WHERE id=?`,
-      [ toNum(row?.money,0), toNum(row?.money,0), toNum(row?.supporters,0), meals, id ]
+      [
+        toNum(row?.money, 0),
+        toNum(row?.money, 0),
+        toNum(row?.supporters, 0),
+        meals,
+        id,
+      ]
     );
-    res.json({ ok:true, message:"Đã tính lại (SQLite)" });
+    res.json({ ok: true, message: "Đã tính lại (SQLite)" });
   } catch (e) {
     console.error("[POST /campaigns/:id/recalc] ", e);
-    res.status(500).json({ ok:false, message:"Không recalc được" });
+    res.status(500).json({ ok: false, message: "Không recalc được" });
   }
 });
 

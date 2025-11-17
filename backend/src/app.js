@@ -36,6 +36,7 @@ import siteSettingsRouter from "./routes/site_settings.js";
 import pickupPointsRouter from "./routes/pickup_points.js";
 import reportsPublicRouter from "./routes/reports.public.js";
 import paymentsImportRouter from "./routes/payments.import.js";
+import testReportRouter from "./routes/testReport.js";
 import announcementsRouter from "./routes/announcements.js";
 import deliveriesRouter from "./routes/deliveries.js";
 import { bookingsRouter } from "./routes/bookings.js";
@@ -48,16 +49,17 @@ import adminSettingsRouter from "./routes/admin_settings.js";
 import analyticsDeliveriesRouter from "./routes/analytics.deliveries.js";
 
 /* ====== Init schema (MySQL only) ====== */
-// In a test environment, we might not want to run this automatically.
-// We can control this via an environment variable.
-if (process.env.NODE_ENV !== "test") {
-  if ((process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql") {
-    await ensureMySQLSchema();
-  }
+// Ensure MySQL schema is in place when using MySQL driver (required for integration tests).
+// This runs migrations/schema creation when DB_DRIVER is 'mysql'.
+if ((process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql") {
+  await ensureMySQLSchema();
 }
 
 const app = express();
-app.set("trust proxy", true);
+// In test environment we disable 'trust proxy' to avoid express-rate-limit
+// throwing ERR_ERL_PERMISSIVE_TRUST_PROXY when running locally.
+const trustProxyValue = process.env.NODE_ENV === "test" ? false : true;
+app.set("trust proxy", trustProxyValue);
 
 /* ---------- CORS ---------- */
 const DEFAULT_ORIGINS = [
@@ -203,6 +205,9 @@ app.use("/api", bookingsRouter);
 app.use("/api/reports", reportsPublicRouter);
 app.use("/api", paymentsImportRouter);
 
+// Route phục vụ báo cáo test (HTML) — chỉ hiển thị file tạo bởi IntegrationTest
+app.use("/test-report", testReportRouter);
+
 app.use("/api/payments", paymentsRouter);
 app.use("/api/payments/momo", momoRouter);
 app.use("/api", adminSettingsRouter);
@@ -248,11 +253,9 @@ app.use((req, res) =>
 app.use((err, _req, res, _next) => {
   console.error(err);
   if (err?.message === "ONLY_IMAGE_ALLOWED") {
-    return res
-      .status(415)
-      .json({
-        error: "Chỉ cho phép file ảnh (png, jpg, jpeg, webp, gif, svg)",
-      });
+    return res.status(415).json({
+      error: "Chỉ cho phép file ảnh (png, jpg, jpeg, webp, gif, svg)",
+    });
   }
   if (err?.code === "LIMIT_FILE_SIZE") {
     return res.status(413).json({ error: "File quá lớn (tối đa 5MB)" });

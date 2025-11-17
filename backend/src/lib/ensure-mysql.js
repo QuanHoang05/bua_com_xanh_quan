@@ -86,18 +86,41 @@ export async function ensureMySQLSchema() {
     CREATE TABLE IF NOT EXISTS campaigns (
       id CHAR(36) PRIMARY KEY,
       title VARCHAR(255) NOT NULL,
+      description TEXT NULL,
       location VARCHAR(255),
-      goal INT NOT NULL DEFAULT 0,
-      raised INT NOT NULL DEFAULT 0,
-      supporters INT NOT NULL DEFAULT 0,
-      tags JSON,
+      type VARCHAR(50) NULL,
       cover VARCHAR(500),
+      cover_url VARCHAR(500) NULL,
+      tags JSON,
+      meta JSON,
+      target_amount INT NOT NULL DEFAULT 0,
+      raised_amount INT NOT NULL DEFAULT 0,
+      supporters INT NOT NULL DEFAULT 0,
+      meal_price INT NULL,
+      meal_received_qty INT NULL,
+      delivered_meals INT NULL,
       status ENUM('active','closed') NOT NULL DEFAULT 'active',
+      deadline DATETIME NULL,
       created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP,
       INDEX(status)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+  // Ensure legacy columns exist (for older DB dumps)
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN meta JSON NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN description TEXT NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN type VARCHAR(50) NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN cover_url VARCHAR(500) NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN deadline DATETIME NULL`);
+  await safeRun(
+    `ALTER TABLE campaigns ADD COLUMN target_amount INT NOT NULL DEFAULT 0`
+  );
+  await safeRun(
+    `ALTER TABLE campaigns ADD COLUMN raised_amount INT NOT NULL DEFAULT 0`
+  );
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN meal_price INT NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN meal_received_qty INT NULL`);
+  await safeRun(`ALTER TABLE campaigns ADD COLUMN delivered_meals INT NULL`);
 
   // food_items (bữa cơm)
   await db.run(`
@@ -138,6 +161,47 @@ export async function ensureMySQLSchema() {
       fee_revenue INT NOT NULL DEFAULT 0
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  /* ====================== DONATIONS ====================== */
+  await db.run(`
+      CREATE TABLE IF NOT EXISTS donations (
+        id INT NOT NULL AUTO_INCREMENT,
+        order_id VARCHAR(100) NULL,
+        campaign_id CHAR(36) NULL,
+        user_id CHAR(36) NULL,
+        type VARCHAR(50) NULL,
+        amount INT NOT NULL DEFAULT 0,
+        qty INT NOT NULL DEFAULT 0,
+        currency VARCHAR(10) NULL,
+        donor_name VARCHAR(255) NULL,
+        donor_note TEXT NULL,
+        memo TEXT NULL,
+        status ENUM('pending','success','failed','pledged','scheduled') NOT NULL DEFAULT 'pending',
+        paid_at DATETIME NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (id),
+        INDEX(campaign_id), INDEX(user_id), INDEX(status), INDEX(order_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `);
+  // Soft-alter common donation columns if missing
+  await safeRun(`ALTER TABLE donations ADD COLUMN order_id VARCHAR(100) NULL`);
+  await safeRun(`ALTER TABLE donations ADD COLUMN campaign_id CHAR(36) NULL`);
+  await safeRun(`ALTER TABLE donations ADD COLUMN user_id CHAR(36) NULL`);
+  await safeRun(`ALTER TABLE donations ADD COLUMN type VARCHAR(50) NULL`);
+  await safeRun(
+    `ALTER TABLE donations ADD COLUMN amount INT NOT NULL DEFAULT 0`
+  );
+  await safeRun(`ALTER TABLE donations ADD COLUMN qty INT NOT NULL DEFAULT 0`);
+  await safeRun(`ALTER TABLE donations ADD COLUMN currency VARCHAR(10) NULL`);
+  await safeRun(
+    `ALTER TABLE donations ADD COLUMN donor_name VARCHAR(255) NULL`
+  );
+  await safeRun(`ALTER TABLE donations ADD COLUMN donor_note TEXT NULL`);
+  await safeRun(`ALTER TABLE donations ADD COLUMN memo TEXT NULL`);
+  await safeRun(
+    `ALTER TABLE donations ADD COLUMN status ENUM('pending','success','failed','pledged','scheduled') NOT NULL DEFAULT 'pending'`
+  );
+  await safeRun(`ALTER TABLE donations ADD COLUMN paid_at DATETIME NULL`);
 
   /* ====================== PICKUP POINTS ====================== */
 

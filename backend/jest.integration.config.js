@@ -1,14 +1,27 @@
 /** @type {import('jest').Config} */
 const config = {
   testEnvironment: "node",
-  clearMocks: true,
+  transform: {
+    "^.+\\.js$": "babel-jest",
+  },
+  moduleNameMapper: {
+    "^node-fetch$": "node-fetch",
+  },
+  // Match only integration tests
+  testMatch: ["<rootDir>/IntegrationTest/**/*.integration.test.js"],
+  // Custom reporters for integration tests
+  reporters: [
+    "default",
+    [
+      "<rootDir>/test-reporter.cjs",
+      {
+        outputPath: "<rootDir>/test-reports",
+        pageTitle: "Báo cáo Integration Test - Bữa Cơm Xanh",
+      },
+    ],
+  ],
+  // Increase timeout for integration tests
   testTimeout: 30000,
-  transform: {},
-  verbose: true,
-  // Chỉ tìm các file test trong thư mục testAPIreal
-  testMatch: ["**/testAPIreal/**/*.test.js"],
-  // Một file setup sẽ chạy trước mỗi bộ test, dùng để dọn dẹp CSDL
-  setupFilesAfterEnv: ["<rootDir>/testAPIreal/setup.js"],
 };
 
 export default config;

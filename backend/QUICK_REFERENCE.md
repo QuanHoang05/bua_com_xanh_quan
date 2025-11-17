@@ -79,4 +79,4 @@ rm backend/auth.real.test.js     # Duplicate
 rm backend/auth.test.js.bak      # Backup file
 ```
 
-Or use VS Code UI: Right-click → Delete on those files
+

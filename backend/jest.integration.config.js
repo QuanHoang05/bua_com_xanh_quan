@@ -7,8 +7,8 @@ const config = {
   moduleNameMapper: {
     "^node-fetch$": "node-fetch",
   },
-  // Match only integration tests
-  testMatch: ["<rootDir>/IntegrationTest/**/*.integration.test.js"],
+  // Match only Jest-style integration tests placed under IntegrationTest/jest
+  testMatch: ["<rootDir>/IntegrationTest/jest/**/*.test.js"],
   // Custom reporters for integration tests
   reporters: [
     "default",

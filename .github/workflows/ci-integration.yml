@@ -66,10 +66,10 @@ jobs:
         run: |
           node src/seed_mysql.js || true
 
-      - name: Run integration tests
+      - name: Run integration tests (Jest)
         working-directory: BuaComXanh/backend
         run: |
-          npm run test:integration --silent || true
+          npm run test:integration:jest --silent || true
 
       - name: Upload test report HTML
         if: always()

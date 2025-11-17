@@ -13,7 +13,7 @@
     "test:verbose": "node scripts/run-tests-and-log.cjs --mode=verbose",
     "test:report": "npm test && echo '\n✅ Báo cáo test đã được tạo tại: test-reports/'",
     "test:integration": "node IntegrationTest/runner.js",
-    "test:integration:jest": "cross-env NODE_ENV=test DB_DRIVER=mysql npx jest --config=jest.integration.config.js",
+    "test:integration:jest": "cross-env NODE_ENV=test DB_DRIVER=mysql NODE_OPTIONS=--experimental-vm-modules npx jest --config=jest.integration.config.js",
     "test:integration:all": "node IntegrationTest/runner.js all",
     "test:integration:auth": "node IntegrationTest/runner.js auth",
     "test:integration:metrics": "node IntegrationTest/runner.js metrics",

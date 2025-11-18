@@ -127,10 +127,8 @@ describe.each([
       .send({ title: "New", content: "Content" });
 
     // Mong đợi status 200 và hàm run được gọi 2 lần (1 cho INSERT, 1 cho ghi log audit)
-    // Mong đợi status 200 và hàm run được gọi 1 lần cho hành động INSERT
     expect(res.statusCode).toBe(200);
     expect(mockDbFunctions.run).toHaveBeenCalledTimes(2);
-    expect(mockDbFunctions.run).toHaveBeenCalledTimes(1);
   });
 
   // Test case: Cập nhật một thông báo thành công
@@ -141,10 +139,8 @@ describe.each([
       .send({ title: "Updated" });
 
     // Mong đợi status 200 và hàm run được gọi 2 lần (UPDATE + audit log)
-    // Mong đợi status 200 và hàm run được gọi 1 lần cho hành động UPDATE
     expect(res.statusCode).toBe(200);
     expect(mockDbFunctions.run).toHaveBeenCalledTimes(2);
-    expect(mockDbFunctions.run).toHaveBeenCalledTimes(1);
   });
 
   // Test case: Xóa một thông báo thành công
@@ -154,9 +150,7 @@ describe.each([
       .set("Authorization", `Bearer ${adminToken}`);
 
     // Mong đợi status 200 và hàm run được gọi 2 lần (DELETE + audit log)
-    // Mong đợi status 200 và hàm run được gọi 1 lần cho hành động DELETE
     expect(res.statusCode).toBe(200);
     expect(mockDbFunctions.run).toHaveBeenCalledTimes(2);
-    expect(mockDbFunctions.run).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,4 +1,4 @@
-name: CI - Integration Tests (MySQL)
+name: CI - Integration Tests (SQLite)
 
 on:
   workflow_dispatch:
@@ -8,17 +8,6 @@ on:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: rootpass
-          MYSQL_DATABASE: bua_com_xanh
-        options: >-
-          --health-cmd="mysqladmin ping --silent"
-          --health-interval=10s --health-timeout=5s --health-retries=10
-        ports:
-          - 3306:3306
 
     steps:
       - name: Checkout
@@ -42,49 +31,6 @@ jobs:
         working-directory: BuaComXanh/BuaComXanh/backend
         run: npm ci
 
-      - name: Wait for MySQL to be ready
-        run: |
-          echo "Waiting for MySQL service..."
-          for i in {1..30}; do
-            if mysqladmin ping -h 127.0.0.1 -prootpass --silent; then
-              echo "MySQL is up"; break
-            fi
-            echo "Waiting... ($i)"; sleep 2
-          done
-
-      - name: Set DB env for integration
-        run: |
-          echo "DB_DRIVER=mysql" >> $GITHUB_ENV
-          echo "DB_HOST=127.0.0.1" >> $GITHUB_ENV
-          echo "DB_PORT=3306" >> $GITHUB_ENV
-          echo "DB_USER=root" >> $GITHUB_ENV
-          echo "DB_PASSWORD=rootpass" >> $GITHUB_ENV
-          echo "DB_NAME=bua_com_xanh" >> $GITHUB_ENV
-
-      - name: Seed MySQL (backend)
+      - name: Run integration tests (SQLite)
         working-directory: BuaComXanh/BuaComXanh/backend
-        run: |
-          node src/seed_mysql.js || true
-
-      - name: Run integration tests (Jest)
-        working-directory: BuaComXanh/BuaComXanh/backend
-        run: |
-          npm run test:integration:jest --silent || true
-
-      - name: Upload test report HTML
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-report
-          path: |
-            BuaComXanh/BuaComXanh/backend/test-report.html
-            BuaComXanh/BuaComXanh/backend/test-reports/**
-
-      - name: Upload test logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-test-logs
-          path: |
-            BuaComXanh/BuaComXanh/backend/test-logs/**
-            BuaComXanh/BuaComXanh/backend/IntegrationTest/errorIntegration.md
+        run: npm run test:integration

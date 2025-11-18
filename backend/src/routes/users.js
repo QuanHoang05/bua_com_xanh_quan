@@ -81,7 +81,9 @@ async function buildFullUserProfile(uid) {
   // Roles (optional table)
   let roles = [];
   try {
-    const rolesRows = await all("SELECT role FROM user_roles WHERE user_id=?", [uid]);
+    const rolesRows = await all("SELECT role FROM user_roles WHERE user_id=?", [
+      uid,
+    ]);
     roles = (rolesRows || []).map((r) => r.role);
   } catch {}
 
@@ -114,13 +116,19 @@ async function buildFullUserProfile(uid) {
   // Stats (optional)
   const stats = {};
   try {
-    const r = await get("SELECT COUNT(1) AS c FROM food_items WHERE owner_id=?", [uid]);
+    const r = await get(
+      "SELECT COUNT(1) AS c FROM food_items WHERE owner_id=?",
+      [uid]
+    );
     stats.items = Number(r?.c || 0);
   } catch {
     stats.items = 0;
   }
   try {
-    const r = await get("SELECT COUNT(1) AS c FROM bookings WHERE receiver_id=?", [uid]);
+    const r = await get(
+      "SELECT COUNT(1) AS c FROM bookings WHERE receiver_id=?",
+      [uid]
+    );
     stats.bookings_received = Number(r?.c || 0);
   } catch {
     stats.bookings_received = 0;
@@ -139,7 +147,9 @@ async function buildFullUserProfile(uid) {
     stats.donations = { count: 0, sum_amount: 0, currency: "VND" };
   }
   try {
-    const r = await get("SELECT COUNT(1) AS c FROM payments WHERE payer_id=?", [uid]);
+    const r = await get("SELECT COUNT(1) AS c FROM payments WHERE payer_id=?", [
+      uid,
+    ]);
     stats.payments = { count: Number(r?.c || 0) };
   } catch {
     stats.payments = { count: 0 };
@@ -167,7 +177,8 @@ function parseAuthIfMissing(req, _res, next) {
 }
 
 export function requireAuth(req, res, next) {
-  if (!req.user?.id) return res.status(401).json({ message: "Unauthenticated" });
+  if (!req.user?.id)
+    return res.status(401).json({ message: "Unauthenticated" });
   next();
 }
 function signToken(user, opts = {}) {
@@ -179,14 +190,53 @@ function signToken(user, opts = {}) {
 /* =========================
    Router
 ========================= */
+
 const router = Router();
 router.use(parseAuthIfMissing);
+
+// GET /api/users — list users (paginated, for admin or authenticated users)
+router.get("/", requireAuth, async (req, res) => {
+  try {
+    // Only admin can see all users, others see only themselves
+    const isAdmin = req.user?.role === "admin";
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const pageSize = Math.max(
+      1,
+      Math.min(50, parseInt(req.query.pageSize) || 20)
+    );
+    const offset = (page - 1) * pageSize;
+    let where = "";
+    let params = [];
+    if (!isAdmin) {
+      where = "WHERE id=?";
+      params = [req.user.id];
+    }
+    const rows = await all(
+      `SELECT id, email, name, avatar_url, role, address, phone, status, created_at, updated_at FROM users ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    const totalRow = isAdmin
+      ? await get("SELECT COUNT(*) AS total FROM users", [])
+      : { total: 1 };
+    res.json({
+      ok: true,
+      items: rows,
+      total: totalRow?.total ?? rows.length,
+      page,
+      pageSize,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, message: e?.message || "Server error" });
+  }
+});
 
 /* ---------- Probes: check/exists email/phone ---------- */
 // GET /api/users/check?email=... | ?phone=...
 // GET /api/users/exists?email=... | ?phone=...
 async function handleExists(req, res) {
-  const email = String(req.query.email || "").trim().toLowerCase();
+  const email = String(req.query.email || "")
+    .trim()
+    .toLowerCase();
   const phone = String(req.query.phone || "").trim();
   try {
     if (email) {
@@ -197,9 +247,13 @@ async function handleExists(req, res) {
       const row = await get("SELECT id FROM users WHERE phone=?", [phone]);
       return res.json({ exists: !!row, field: "phone" });
     }
-    return res.status(400).json({ error: "missing_query", message: "Provide email or phone" });
+    return res
+      .status(400)
+      .json({ error: "missing_query", message: "Provide email or phone" });
   } catch (e) {
-    return res.status(500).json({ error: "server_error", message: e?.message || "Server error" });
+    return res
+      .status(500)
+      .json({ error: "server_error", message: e?.message || "Server error" });
   }
 }
 router.get("/check", handleExists);
@@ -245,18 +299,29 @@ router.get("/me/full", requireAuth, async (req, res) => {
 // PATCH /api/users/me
 router.patch("/me", requireAuth, async (req, res) => {
   const uid = req.user.id;
-  const { name = "", address = "", avatar_url = "", phone = "", lat = null, lng = null } = req.body || {};
+  const {
+    name = "",
+    address = "",
+    avatar_url = "",
+    phone = "",
+    lat = null,
+    lng = null,
+  } = req.body || {};
 
   try {
     try {
       await run(
-        "UPDATE users SET name=?, address=?, avatar_url=?, phone=?, lat=?, lng=?, updated_at=" + NOW_SQL + " WHERE id=?",
+        "UPDATE users SET name=?, address=?, avatar_url=?, phone=?, lat=?, lng=?, updated_at=" +
+          NOW_SQL +
+          " WHERE id=?",
         [name, address, avatar_url, phone, lat, lng, uid]
       );
     } catch (e) {
       if (/no such column|unknown column/i.test(String(e?.message || ""))) {
         await run(
-          "UPDATE users SET name=?, address=?, avatar_url=?, phone=?, updated_at=" + NOW_SQL + " WHERE id=?",
+          "UPDATE users SET name=?, address=?, avatar_url=?, phone=?, updated_at=" +
+            NOW_SQL +
+            " WHERE id=?",
           [name, address, avatar_url, phone, uid]
         );
       } else {
@@ -281,20 +346,30 @@ router.patch("/me/password", requireAuth, async (req, res) => {
     const { current_password = "", new_password = "" } = req.body || {};
 
     if (!current_password || !new_password) {
-      return res.status(400).json({ message: "Missing current_password/new_password" });
+      return res
+        .status(400)
+        .json({ message: "Missing current_password/new_password" });
     }
     if (String(new_password).length < 8) {
-      return res.status(400).json({ message: "Password must be at least 8 characters" });
+      return res
+        .status(400)
+        .json({ message: "Password must be at least 8 characters" });
     }
 
-    const user = await get("SELECT id,password_hash FROM users WHERE id=?", [uid]);
+    const user = await get("SELECT id,password_hash FROM users WHERE id=?", [
+      uid,
+    ]);
     if (!user) return res.status(404).json({ message: "User not found" });
 
     const ok = await bcrypt.compare(current_password, user.password_hash || "");
-    if (!ok) return res.status(401).json({ message: "Current password is incorrect" });
+    if (!ok)
+      return res.status(401).json({ message: "Current password is incorrect" });
 
     const nextHash = await bcrypt.hash(String(new_password), 10);
-    await run("UPDATE users SET password_hash=?, updated_at=" + NOW_SQL + " WHERE id=?", [nextHash, uid]);
+    await run(
+      "UPDATE users SET password_hash=?, updated_at=" + NOW_SQL + " WHERE id=?",
+      [nextHash, uid]
+    );
 
     return res.json({ ok: true });
   } catch (e) {
@@ -339,12 +414,25 @@ router.get("/export", requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
 
-    const user = await get("SELECT * FROM users WHERE id=?", [uid]).catch(() => null);
-    const items = await all("SELECT * FROM food_items WHERE owner_id=?", [uid]).catch(() => []);
-    const bookings = await all("SELECT * FROM bookings WHERE receiver_id=?", [uid]).catch(() => []);
-    const payments = await all("SELECT * FROM payments WHERE payer_id=?", [uid]).catch(() => []);
-    const notifications = await all("SELECT * FROM notifications WHERE user_id=?", [uid]).catch(() => []);
-    const reports = await all("SELECT * FROM reports WHERE reporter_id=?", [uid]).catch(() => []);
+    const user = await get("SELECT * FROM users WHERE id=?", [uid]).catch(
+      () => null
+    );
+    const items = await all("SELECT * FROM food_items WHERE owner_id=?", [
+      uid,
+    ]).catch(() => []);
+    const bookings = await all("SELECT * FROM bookings WHERE receiver_id=?", [
+      uid,
+    ]).catch(() => []);
+    const payments = await all("SELECT * FROM payments WHERE payer_id=?", [
+      uid,
+    ]).catch(() => []);
+    const notifications = await all(
+      "SELECT * FROM notifications WHERE user_id=?",
+      [uid]
+    ).catch(() => []);
+    const reports = await all("SELECT * FROM reports WHERE reporter_id=?", [
+      uid,
+    ]).catch(() => []);
 
     const payload = {
       exported_at: new Date().toISOString(),
@@ -357,7 +445,10 @@ router.get("/export", requireAuth, async (req, res) => {
     };
 
     res.setHeader("Content-Type", "application/json; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="bua-com-xanh-${uid}.json"`);
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="bua-com-xanh-${uid}.json"`
+    );
     res.status(200).send(JSON.stringify(payload, null, 2));
   } catch (e) {
     res.status(500).json({ message: e?.message || "Server error" });
@@ -368,8 +459,18 @@ router.get("/export", requireAuth, async (req, res) => {
 router.post("/delete", requireAuth, async (req, res) => {
   try {
     const uid = req.user.id;
-    await run("UPDATE users SET status='deleted', updated_at=" + NOW_SQL + " WHERE id=?", [uid]).catch(() => {});
-    await run("UPDATE food_items SET status='hidden', updated_at=" + NOW_SQL + " WHERE owner_id=?", [uid]).catch(() => {});
+    await run(
+      "UPDATE users SET status='deleted', updated_at=" +
+        NOW_SQL +
+        " WHERE id=?",
+      [uid]
+    ).catch(() => {});
+    await run(
+      "UPDATE food_items SET status='hidden', updated_at=" +
+        NOW_SQL +
+        " WHERE owner_id=?",
+      [uid]
+    ).catch(() => {});
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ message: e?.message || "Server error" });
@@ -393,6 +494,8 @@ router.get("/sessions", requireAuth, async (req, res) => {
     res.status(500).json({ message: e?.message || "Server error" });
   }
 });
-router.post("/logout-others", requireAuth, async (_req, res) => res.json({ ok: true }));
+router.post("/logout-others", requireAuth, async (_req, res) =>
+  res.json({ ok: true })
+);
 
 export default router;

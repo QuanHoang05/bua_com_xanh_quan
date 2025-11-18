@@ -2,8 +2,8 @@
 import { Router } from "express";
 import "dotenv/config";
 
-// 🔒 ÉP dùng MySQL để chắc chắn đọc đúng DB có dữ liệu
-import { db } from "../lib/db.mysql.js";
+// Use dispatcher so the selected driver (sqlite/mysql) is used
+import { db } from "../lib/db.js";
 
 async function dbAll(sql, params = []) {
   const [rows] = await db.query(sql, params);
@@ -32,10 +32,15 @@ const methodExpr = (a = "d") => `
 router.get("/payments", async (req, res) => {
   try {
     const {
-      q = "", status = "all", method = "all",
-      date_from = "", date_to = "",
-      page = 1, pageSize = 20,
-      sortBy = "created_at", order = "desc",
+      q = "",
+      status = "all",
+      method = "all",
+      date_from = "",
+      date_to = "",
+      page = 1,
+      pageSize = 20,
+      sortBy = "created_at",
+      order = "desc",
     } = req.query;
 
     const p = Math.max(1, Number(page) || 1);
@@ -67,8 +72,14 @@ router.get("/payments", async (req, res) => {
     }
 
     // ngày tạo
-    if (date_from) { where.push("d.created_at >= ?"); params.push(`${date_from} 00:00:00`); }
-    if (date_to)   { where.push("d.created_at <= ?"); params.push(`${date_to} 23:59:59`); }
+    if (date_from) {
+      where.push("d.created_at >= ?");
+      params.push(`${date_from} 00:00:00`);
+    }
+    if (date_to) {
+      where.push("d.created_at <= ?");
+      params.push(`${date_to} 23:59:59`);
+    }
 
     // method (map từ cột thật) — lọc ở SQL để nhanh
     if (method !== "all") {
@@ -148,8 +159,16 @@ router.get("/payments/export", async (_req, res) => {
     );
 
     const header = [
-      "id","created_at","paid_at","payer_id","payer_name",
-      "campaign_id","amount","method","status","reference"
+      "id",
+      "created_at",
+      "paid_at",
+      "payer_id",
+      "payer_name",
+      "campaign_id",
+      "amount",
+      "method",
+      "status",
+      "reference",
     ];
 
     const esc = (v) => {
@@ -158,7 +177,9 @@ router.get("/payments/export", async (_req, res) => {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
 
-    const body = rows.map(r => header.map(k => esc(r[k])).join(",")).join("\n");
+    const body = rows
+      .map((r) => header.map((k) => esc(r[k])).join(","))
+      .join("\n");
     const csv = header.join(",") + "\n" + body + "\n";
 
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

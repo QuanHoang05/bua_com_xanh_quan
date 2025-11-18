@@ -4,30 +4,45 @@ import crypto from "crypto";
 import "dotenv/config";
 import { requireAuth } from "../middlewares/auth.js";
 
+// Code đúng
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else ({ db } = await import("../lib/db.js"));
+if (useMySQL) {
+  ({ db } = await import("../lib/db.mysql.js"));
+} else {
+  ({ db } = await import("../lib/db.js"));
+}
 
 const router = Router();
 
 /* ---------------- DB helpers ---------------- */
 async function dbGet(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbAll(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 async function dbRun(sql, params = []) {
-  if (useMySQL) { const [r] = await db.query(sql, params); return r; }
+  if (useMySQL) {
+    const [r] = await db.query(sql, params);
+    return r;
+  }
   return db.prepare(sql).run(...params);
 }
 
 /* ---------------- Utils ---------------- */
 const genUUID = () =>
-  (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString("hex"));
+  crypto.randomUUID
+    ? crypto.randomUUID()
+    : crypto.randomBytes(16).toString("hex");
 const NOW = () => (useMySQL ? "NOW()" : "CURRENT_TIMESTAMP");
 
 /* ---------------- Minor helpers ---------------- */
@@ -95,17 +110,37 @@ router.patch("/me", requireAuth, async (req, res) => {
   try {
     const uid = req.user?.id;
     const { name, phone, address, avatar_url, lat, lng } = req.body || {};
-    const set = [], vals = [];
-    if (name !== undefined) { set.push("name=?"); vals.push(String(name)); }
-    if (phone !== undefined) { set.push("phone=?"); vals.push(String(phone)); }
-    if (address !== undefined) { set.push("address=?"); vals.push(String(address)); }
-    if (avatar_url !== undefined) { set.push("avatar_url=?"); vals.push(String(avatar_url)); }
-    if (lat !== undefined) { set.push("lat=?"); vals.push(Number(lat)); }
-    if (lng !== undefined) { set.push("lng=?"); vals.push(Number(lng)); }
+    const set = [],
+      vals = [];
+    if (name !== undefined) {
+      set.push("name=?");
+      vals.push(String(name));
+    }
+    if (phone !== undefined) {
+      set.push("phone=?");
+      vals.push(String(phone));
+    }
+    if (address !== undefined) {
+      set.push("address=?");
+      vals.push(String(address));
+    }
+    if (avatar_url !== undefined) {
+      set.push("avatar_url=?");
+      vals.push(String(avatar_url));
+    }
+    if (lat !== undefined) {
+      set.push("lat=?");
+      vals.push(Number(lat));
+    }
+    if (lng !== undefined) {
+      set.push("lng=?");
+      vals.push(Number(lng));
+    }
     if (set.length) set.push(`updated_at=${NOW()}`);
     vals.push(uid);
 
-    if (set.length) await dbRun(`UPDATE users SET ${set.join(",")} WHERE id=?`, vals);
+    if (set.length)
+      await dbRun(`UPDATE users SET ${set.join(",")} WHERE id=?`, vals);
     if (address !== undefined) await ensureDefaultAddressForUser(uid);
 
     const me = await dbGet(
@@ -151,8 +186,14 @@ router.get("/me/bookings", requireAuth, async (req, res) => {
    LEFT JOIN campaigns c ON c.id = b.campaign_id
        WHERE b.receiver_id=?`;
 
-    if (status && status !== "all") { sql += ` AND b.status=?`; p.push(String(status)); }
-    if (q) { sql += ` AND (IFNULL(b.note,'') LIKE ? OR b.id LIKE ?)`; p.push(`%${q}%`, `%${q}%`); }
+    if (status && status !== "all") {
+      sql += ` AND b.status=?`;
+      p.push(String(status));
+    }
+    if (q) {
+      sql += ` AND (IFNULL(b.note,'') LIKE ? OR b.id LIKE ?)`;
+      p.push(`%${q}%`, `%${q}%`);
+    }
 
     sql += ` ORDER BY b.created_at DESC LIMIT ? OFFSET ?`;
     p.push(Number(limit), Number(offset));
@@ -182,7 +223,10 @@ router.get("/me/deliveries", requireAuth, async (req, res) => {
    LEFT JOIN users u_s   ON u_s.id = d.shipper_id
        WHERE b.receiver_id=?`;
 
-    if (booking_id) { sql += ` AND d.booking_id=?`; p.push(String(booking_id)); }
+    if (booking_id) {
+      sql += ` AND d.booking_id=?`;
+      p.push(String(booking_id));
+    }
 
     sql += ` ORDER BY d.created_at DESC LIMIT ? OFFSET ?`;
     p.push(Number(limit), Number(offset));
@@ -207,7 +251,7 @@ router.post("/me/bookings", requireAuth, async (req, res) => {
       qty = 1,
       method = "delivery",
       note = null,
-      dropoff_address = null
+      dropoff_address = null,
     } = req.body || {};
 
     // Lấy user + validate phone
@@ -222,7 +266,8 @@ router.post("/me/bookings", requireAuth, async (req, res) => {
     await ensureDefaultAddressForUser(uid);
 
     // Dropoff dùng ưu tiên payload, fallback users.address
-    const usedDropAddr = (dropoff_address && String(dropoff_address).trim()) || u.address || null;
+    const usedDropAddr =
+      (dropoff_address && String(dropoff_address).trim()) || u.address || null;
 
     const id = genUUID();
     await dbRun(
@@ -242,7 +287,7 @@ router.post("/me/bookings", requireAuth, async (req, res) => {
         String(method),
         usedDropAddr,
         u.name || null,
-        u.phone || null
+        u.phone || null,
       ]
     );
 

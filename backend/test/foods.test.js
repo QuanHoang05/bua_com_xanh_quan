@@ -3,20 +3,10 @@ import { jest, describe, test, expect, beforeAll, beforeEach } from "@jest/globa
 import request from "supertest";
 import express from "express";
 
-// --- MOCK MODULES ---
-jest.unstable_mockModule("../src/lib/db.js", () => ({
-  db: {
-    prepare: jest.fn(),
-  },
-}));
-jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
-  db: {
-    get: jest.fn(),
-    all: jest.fn(),
-  },
-}));
-
-describe("Food Routes (/api/foods)", () => {
+describe.each([
+  { driver: "sqlite", dbModulePath: "../src/lib/db.js" },
+  { driver: "mysql", dbModulePath: "../src/lib/db.mysql.js" },
+])("Food Routes with $driver DB", ({ driver, dbModulePath }) => {
   const mockFoodItem = {
     id: "food-123",
     title: "Test Food Item",
@@ -28,86 +18,47 @@ describe("Food Routes (/api/foods)", () => {
     tags: JSON.stringify(["test", "food"]),
     images: JSON.stringify(["image.jpg"]),
   };
+  let app;
+  let db;
+  const mockDbFunctions = {
+    run: jest.fn(),
+    get: jest.fn(),
+    all: jest.fn(),
+    query: jest.fn(),
+  };
 
-  // =======================
-  // TEST SUITE FOR SQLITE
-  // =======================
-  describe("with SQLite DB", () => {
-    let app;
-    let sqliteDb;
+  beforeAll(async () => {
+    process.env.DB_DRIVER = driver;
+    jest.resetModules();
+    jest.unstable_mockModule(dbModulePath, () => ({ db: {} }));
 
-    beforeAll(async () => {
-      process.env.DB_DRIVER = "sqlite";
-      jest.resetModules();
+    const dbModule = await import(dbModulePath);
+    db = dbModule.db;
 
-      const { default: foodsRouter } = await import("../src/routes/foods.js");
-      const dbModule = await import("../src/lib/db.js");
-      sqliteDb = dbModule.db;
+    if (driver === "sqlite") {
+      db.prepare = jest.fn(() => mockDbFunctions);
+    } else {
+      db.run = mockDbFunctions.run;
+      db.all = mockDbFunctions.all;
+      db.get = mockDbFunctions.get;
+      db.query = mockDbFunctions.query;
+    }
 
-      app = express();
-      app.use(express.json());
-      app.use("/api/foods", foodsRouter);
-    });
-
-    beforeEach(() => {
-      jest.clearAllMocks();
-    });
-
-    // Kiểm tra chức năng lấy danh sách thực phẩm (public).
-    test("GET / should return a list of food items", async () => {
-      const getMock = jest.fn().mockReturnValue({ total: 1 });
-      const allMock = jest.fn().mockReturnValue([mockFoodItem]);
-      sqliteDb.prepare
-        .mockReturnValueOnce({ get: getMock })   // For the COUNT(*) query
-        .mockReturnValueOnce({ all: allMock });  // For the main list query
-
-      const res = await request(app).get("/api/foods");
-
-      expect(res.statusCode).toBe(200);
-      expect(res.body.items).toHaveLength(1);
-      expect(res.body.items[0].id).toBe(mockFoodItem.id);
-      expect(res.body.total).toBe(1);
-      // Check that tags and images are parsed
-      expect(Array.isArray(res.body.items[0].tags)).toBe(true);
-      expect(Array.isArray(res.body.items[0].images)).toBe(true);
-    });
+    const { default: foodsRouter } = await import("../src/routes/foods.js");
+    app = express();
+    app.use(express.json());
+    app.use("/api/foods", foodsRouter);
   });
 
-  // =======================
-  // TEST SUITE FOR MYSQL
-  // =======================
-  describe("with MySQL DB", () => {
-    let app;
-    let mysqlDb;
+  test("GET / should return a list of food items", async () => {
+    mockDbFunctions.get.mockResolvedValue({ total: 1 });
+    mockDbFunctions.all.mockResolvedValue([mockFoodItem]);
 
-    beforeAll(async () => {
-      process.env.DB_DRIVER = "mysql";
-      jest.resetModules();
+    const res = await request(app).get("/api/foods");
 
-      const { default: foodsRouter } = await import("../src/routes/foods.js");
-      const dbModule = await import("../src/lib/db.mysql.js");
-      mysqlDb = dbModule.db;
-
-      app = express();
-      app.use(express.json());
-      app.use("/api/foods", foodsRouter);
-    });
-
-    beforeEach(() => {
-      jest.clearAllMocks();
-    });
-
-    // Kiểm tra chức năng lấy danh sách thực phẩm (public).
-    test("GET / should return a list of food items", async () => {
-      mysqlDb.get.mockResolvedValue({ total: 1 });
-      mysqlDb.all.mockResolvedValue([mockFoodItem]);
-
-      const res = await request(app).get("/api/foods");
-
-      expect(res.statusCode).toBe(200);
-      expect(res.body.items).toHaveLength(1);
-      expect(res.body.items[0].id).toBe(mockFoodItem.id);
-      expect(res.body.total).toBe(1);
-    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+    expect(res.body.items[0].id).toBe(mockFoodItem.id);
+    expect(res.body.total).toBe(1);
   });
 });

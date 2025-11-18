@@ -3,12 +3,15 @@ import { requireAuth } from "../middlewares/auth.js";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
 else ({ db } = await import("../lib/db.js"));
 
 const r = Router();
-async function dbAll(sql, params=[]) { 
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+async function dbAll(sql, params = []) {
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 

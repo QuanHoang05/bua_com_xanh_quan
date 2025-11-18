@@ -4,7 +4,7 @@ import "dotenv/config";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
 else ({ db } = await import("../lib/db.js"));
 
 const router = Router();
@@ -41,9 +41,10 @@ const toNum = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 /** Read setting from site_settings using either (k,v) or (s_key,s_value) schema */
 async function readSetting(key) {
   // k/v
-  let row = await dbGet(`SELECT v AS value FROM site_settings WHERE k=? LIMIT 1`, [key]).catch(
-    () => null
-  );
+  let row = await dbGet(
+    `SELECT v AS value FROM site_settings WHERE k=? LIMIT 1`,
+    [key]
+  ).catch(() => null);
   if (row?.value != null) return row.value;
 
   // s_key/s_value
@@ -118,7 +119,9 @@ router.get("/", async (req, res) => {
         ];
       }
       list = list
-        .map((x) => (typeof x === "string" ? { code: x, name: x, enabled: true } : x))
+        .map((x) =>
+          typeof x === "string" ? { code: x, name: x, enabled: true } : x
+        )
         .filter((x) => x && (x.enabled === undefined || x.enabled));
       return res.json({ ok: true, key, value: list });
     }

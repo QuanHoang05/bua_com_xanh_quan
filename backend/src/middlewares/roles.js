@@ -12,7 +12,7 @@
         const useMySQL =
           (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
         let dbModule;
-        if (useMySQL) {
+        if (useMySQL) { // Sửa lỗi: import đúng module cho MySQL
           dbModule = await import("../lib/db.mysql.js");
         } else {
           dbModule = await import("../lib/db.js");

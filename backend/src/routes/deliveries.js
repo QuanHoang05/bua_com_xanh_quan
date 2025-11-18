@@ -12,22 +12,31 @@ try {
 // ===== DB bootstrap (MySQL | SQLite) =====
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
+else ({ db } = await import("../lib/db.js"));
 
 const r = Router();
 
 /* ---------------- mini DB helpers ---------------- */
 async function dbAll(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 async function dbGet(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbRun(sql, params = []) {
-  if (useMySQL) { const [ret] = await db.query(sql, params); return ret; }
+  if (useMySQL) {
+    const [ret] = await db.query(sql, params);
+    return ret;
+  }
   return db.prepare(sql).run(...params);
 }
 
@@ -56,7 +65,11 @@ async function mysqlAddColumnIfMissing(table, columnDef) {
 /* ---------------- SQLite: utilities ---------------- */
 async function sqliteAddColumnIfMissing(table, columnDef) {
   if (useMySQL) return;
-  try { await dbRun(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`); } catch { /* ignore */ }
+  try {
+    await dbRun(`ALTER TABLE ${table} ADD COLUMN ${columnDef}`);
+  } catch {
+    /* ignore */
+  }
 }
 
 /* ==================== bootstrap: ensure tables/columns ==================== */
@@ -90,7 +103,10 @@ async function ensureDeliveryAuxTables() {
     // MySQL chỉ thêm cột nếu thiếu (bảng đã có từ schema chính)
     await mysqlAddColumnIfMissing("delivery_reports", "admin_note TEXT NULL");
     await mysqlAddColumnIfMissing("delivery_reports", "admin_reply TEXT NULL");
-    await mysqlAddColumnIfMissing("delivery_reports", "admin_user_id BIGINT NULL");
+    await mysqlAddColumnIfMissing(
+      "delivery_reports",
+      "admin_user_id BIGINT NULL"
+    );
   }
 
   // delivery_reviews (rating sau khi hoàn tất)
@@ -129,22 +145,25 @@ async function ensureDeliveryAuxTables() {
     "dropoff_address TEXT NULL",
 
     // logistics
-    "unit VARCHAR(32) NULL",  // đơn vị suất/hộp/… (align với bảng inventory)
-    "qty INT NULL",           // số lượng dự kiến giao
+    "unit VARCHAR(32) NULL", // đơn vị suất/hộp/… (align với bảng inventory)
+    "qty INT NULL", // số lượng dự kiến giao
     "eta_time DATETIME NULL", // ETA dự kiến
   ];
 
   if (useMySQL) {
     for (const def of addCols) await mysqlAddColumnIfMissing("deliveries", def);
   } else {
-    for (const def of addCols) await sqliteAddColumnIfMissing("deliveries", def);
+    for (const def of addCols)
+      await sqliteAddColumnIfMissing("deliveries", def);
   }
 }
 await ensureDeliveryAuxTables();
 
 /* ========================= role helpers ========================= */
-const isAdmin   = (u) => u?.role === "admin"   || (u?.roles || []).includes?.("admin");
-const isShipper = (u) => u?.role === "shipper" || (u?.roles || []).includes?.("shipper");
+const isAdmin = (u) =>
+  u?.role === "admin" || (u?.roles || []).includes?.("admin");
+const isShipper = (u) =>
+  u?.role === "shipper" || (u?.roles || []).includes?.("shipper");
 
 /* ========================= read helpers ========================= */
 async function getDeliveryFull(id) {
@@ -184,22 +203,30 @@ async function getDeliveryFull(id) {
 
 function allowTransition(curr, action) {
   const next = {
-    accept:       { from: ["pending"] },
+    accept: { from: ["pending"] },
     start_pickup: { from: ["assigned"] },
-    delivered:    { from: ["picking"] },
-    cancel:       { from: ["pending", "assigned", "picking"] },
+    delivered: { from: ["picking"] },
+    cancel: { from: ["pending", "assigned", "picking"] },
   };
   const rule = next[action];
   return rule ? rule.from.includes(curr) : false;
 }
 
 function normalizeReason(input) {
-  const raw = String(input || "").trim().toLowerCase();
+  const raw = String(input || "")
+    .trim()
+    .toLowerCase();
   const map = new Map([
-    ["giao muộn", "late"], ["giao trễ", "late"], ["trễ", "late"],
-    ["thiếu hàng", "missing"], ["thiếu", "missing"],
-    ["thái độ không tốt", "attitude"], ["thái độ", "attitude"],
-    ["hàng hoá hư hỏng", "damage"], ["hư hỏng", "damage"], ["hỏng", "damage"],
+    ["giao muộn", "late"],
+    ["giao trễ", "late"],
+    ["trễ", "late"],
+    ["thiếu hàng", "missing"],
+    ["thiếu", "missing"],
+    ["thái độ không tốt", "attitude"],
+    ["thái độ", "attitude"],
+    ["hàng hoá hư hỏng", "damage"],
+    ["hư hỏng", "damage"],
+    ["hỏng", "damage"],
     ["khác", "other"],
   ]);
   return map.get(raw) || raw;
@@ -216,11 +243,21 @@ r.get("/", requireAuth, async (req, res) => {
     const _isAdmin = isAdmin(req.user);
     const _isShipper = isShipper(req.user);
 
-    let mine = String(req.query.mine ?? "").toLowerCase().trim();
-    if (!mine || mine === "1" || mine === "true") mine = _isShipper ? "shipper" : "recipient";
+    let mine = String(req.query.mine ?? "")
+      .toLowerCase()
+      .trim();
+    if (!mine || mine === "1" || mine === "true")
+      mine = _isShipper ? "shipper" : "recipient";
 
-    const statuses = status ? String(status).split(",").map(s => s.trim()).filter(Boolean) : [];
-    const stSQL = statuses.length ? ` AND d.status IN (${statuses.map(() => "?").join(",")})` : "";
+    const statuses = status
+      ? String(status)
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+    const stSQL = statuses.length
+      ? ` AND d.status IN (${statuses.map(() => "?").join(",")})`
+      : "";
     const stParams = statuses;
     const like = (v) => `%${String(v || "").trim()}%`;
 
@@ -271,7 +308,10 @@ r.get("/", requireAuth, async (req, res) => {
     // ----- admin: view all with pagination -----
     if (_isAdmin && String(req.query.scope).toLowerCase() === "all") {
       const page = Math.max(1, Number(req.query.page || 1));
-      const pageSize = Math.min(100, Math.max(1, Number(req.query.page_size || 20)));
+      const pageSize = Math.min(
+        100,
+        Math.max(1, Number(req.query.page_size || 20))
+      );
       const off = (page - 1) * pageSize;
 
       const rows = await dbAll(
@@ -317,7 +357,11 @@ r.get("/", requireAuth, async (req, res) => {
              LEFT JOIN users     u  ON u.id = d.shipper_id
             WHERE 1=1
               ${stSQL}
-              ${ q ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)` : "" }
+              ${
+                q
+                  ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)`
+                  : ""
+              }
             ORDER BY d.updated_at DESC, d.created_at DESC
             LIMIT ? OFFSET ?`,
         [...stParams, ...(q ? [like(q), like(q), like(q)] : []), pageSize, off]
@@ -369,7 +413,11 @@ r.get("/", requireAuth, async (req, res) => {
              LEFT JOIN users     u  ON u.id = d.shipper_id
             WHERE d.shipper_id = ?
               ${stSQL}
-              ${ q ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)` : "" }
+              ${
+                q
+                  ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)`
+                  : ""
+              }
             ORDER BY d.updated_at DESC, d.created_at DESC`,
         [req.user.id, ...stParams, ...(q ? [like(q), like(q), like(q)] : [])]
       );
@@ -419,14 +467,23 @@ r.get("/", requireAuth, async (req, res) => {
            LEFT JOIN users     u  ON u.id = d.shipper_id
           WHERE b.receiver_id = ?
             ${stSQL}
-            ${ q ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)` : "" }
+            ${
+              q
+                ? ` AND (d.id LIKE ? OR COALESCE(d.pickup_address,'') LIKE ? OR COALESCE(d.dropoff_address,'') LIKE ?)`
+                : ""
+            }
           ORDER BY d.updated_at DESC, d.created_at DESC`,
       [req.user.id, ...stParams, ...(q ? [like(q), like(q), like(q)] : [])]
     );
     return res.json({ items: rows });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "list_deliveries_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({
+        error: "list_deliveries_failed",
+        message: e?.message || "Server error",
+      });
   }
 });
 
@@ -441,28 +498,37 @@ r.patch("/:id/status", requireAuth, async (req, res) => {
     const row = await getDeliveryFull(id);
     if (!row) return res.status(404).json({ error: "not_found" });
 
-    const admin   = isAdmin(req.user);
+    const admin = isAdmin(req.user);
     const shipper = isShipper(req.user);
-    const isOwnerShipper  = row.shipper_id  === req.user.id;
+    const isOwnerShipper = row.shipper_id === req.user.id;
     const isOwnerReceiver = row.receiver_id === req.user.id;
 
-    if (action === "accept" && !shipper) return res.status(403).json({ error: "forbidden" });
-    if (["start_pickup", "delivered"].includes(action) && !(shipper && isOwnerShipper))
+    if (action === "accept" && !shipper)
+      return res.status(403).json({ error: "forbidden" });
+    if (
+      ["start_pickup", "delivered"].includes(action) &&
+      !(shipper && isOwnerShipper)
+    )
       return res.status(403).json({ error: "forbidden" });
     if (action === "cancel" && !(admin || shipper || isOwnerReceiver))
       return res.status(403).json({ error: "forbidden" });
 
     if (!allowTransition(row.status, action))
-      return res.status(409).json({ error: "invalid_transition", from: row.status, action });
+      return res
+        .status(409)
+        .json({ error: "invalid_transition", from: row.status, action });
 
     let nextStatus = row.status;
     if (action === "accept") {
       nextStatus = "assigned";
       if (!row.shipper_id)
-        await dbRun("UPDATE deliveries SET shipper_id = ? WHERE id = ?", [req.user.id, id]);
+        await dbRun("UPDATE deliveries SET shipper_id = ? WHERE id = ?", [
+          req.user.id,
+          id,
+        ]);
     } else if (action === "start_pickup") nextStatus = "picking";
-    else if (action === "delivered")      nextStatus = "delivered";
-    else if (action === "cancel")         nextStatus = "cancelled";
+    else if (action === "delivered") nextStatus = "delivered";
+    else if (action === "cancel") nextStatus = "cancelled";
 
     await dbRun(
       useMySQL
@@ -473,7 +539,12 @@ r.patch("/:id/status", requireAuth, async (req, res) => {
     return res.json({ ok: true, id, status: nextStatus });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "patch_status_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({
+        error: "patch_status_failed",
+        message: e?.message || "Server error",
+      });
   }
 });
 
@@ -492,7 +563,8 @@ r.patch("/:id/review", requireAuth, async (req, res) => {
 
     const admin = isAdmin(req.user);
     const isOwnerReceiver = row.receiver_id === req.user.id;
-    if (!(isOwnerReceiver || admin)) return res.status(403).json({ error: "forbidden" });
+    if (!(isOwnerReceiver || admin))
+      return res.status(403).json({ error: "forbidden" });
 
     if (!["delivered", "cancelled"].includes(row.status))
       return res.status(409).json({ error: "not_finished" });
@@ -516,7 +588,9 @@ r.patch("/:id/review", requireAuth, async (req, res) => {
     return res.json({ ok: true, id, rating, comment });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "review_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({ error: "review_failed", message: e?.message || "Server error" });
   }
 });
 
@@ -529,16 +603,19 @@ r.patch("/:id/report", requireAuth, async (req, res) => {
     const type = normalizeReason(reason);
 
     const allow = new Set(["late", "missing", "attitude", "damage", "other"]);
-    if (!id || !type || !allow.has(type)) return res.status(400).json({ error: "invalid_input" });
-    if (details && String(details).trim().length < 5) return res.status(400).json({ error: "details_too_short" });
+    if (!id || !type || !allow.has(type))
+      return res.status(400).json({ error: "invalid_input" });
+    if (details && String(details).trim().length < 5)
+      return res.status(400).json({ error: "details_too_short" });
 
     const row = await getDeliveryFull(id);
     if (!row) return res.status(404).json({ error: "not_found" });
 
     const admin = isAdmin(req.user);
     const isOwnerReceiver = row.receiver_id === req.user.id;
-    const isOwnerShipper  = row.shipper_id  === req.user.id;
-    if (!(isOwnerReceiver || isOwnerShipper || admin)) return res.status(403).json({ error: "forbidden" });
+    const isOwnerShipper = row.shipper_id === req.user.id;
+    if (!(isOwnerReceiver || isOwnerShipper || admin))
+      return res.status(403).json({ error: "forbidden" });
 
     const reportId = crypto.randomUUID();
     const imagesJson = JSON.stringify(Array.isArray(images) ? images : []);
@@ -557,10 +634,20 @@ r.patch("/:id/report", requireAuth, async (req, res) => {
         [reportId, id, req.user.id, type, details, imagesJson]
       );
     }
-    return res.json({ ok: true, id, report_id: reportId, type, reason: type, details, status: "open" });
+    return res.json({
+      ok: true,
+      id,
+      report_id: reportId,
+      type,
+      reason: type,
+      details,
+      status: "open",
+    });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "report_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({ error: "report_failed", message: e?.message || "Server error" });
   }
 });
 
@@ -568,18 +655,21 @@ r.patch("/:id/report", requireAuth, async (req, res) => {
 r.get("/:id/reports", requireAuth, async (req, res) => {
   try {
     const deliveryId = String(req.params.id || "");
-    if (!deliveryId) return res.status(400).json({ error: "invalid_delivery_id" });
+    if (!deliveryId)
+      return res.status(400).json({ error: "invalid_delivery_id" });
 
     const del = await getDeliveryFull(deliveryId);
     if (!del) return res.status(404).json({ error: "delivery_not_found" });
 
-    const admin   = isAdmin(req.user);
+    const admin = isAdmin(req.user);
     const shipper = isShipper(req.user);
-    const isOwnerShipper  = del.shipper_id  === req.user.id;
+    const isOwnerShipper = del.shipper_id === req.user.id;
     const isOwnerReceiver = del.receiver_id === req.user.id;
-    if (!(admin || shipper || isOwnerShipper || isOwnerReceiver)) return res.status(403).json({ error: "forbidden" });
+    if (!(admin || shipper || isOwnerShipper || isOwnerReceiver))
+      return res.status(403).json({ error: "forbidden" });
 
-    let hasAdminUserId = false, hasAdminReply = false;
+    let hasAdminUserId = false,
+      hasAdminReply = false;
     if (useMySQL) {
       [hasAdminUserId, hasAdminReply] = await Promise.all([
         mysqlHasColumn("delivery_reports", "admin_user_id"),
@@ -587,12 +677,15 @@ r.get("/:id/reports", requireAuth, async (req, res) => {
       ]);
     } else {
       await sqliteAddColumnIfMissing("delivery_reports", "admin_reply TEXT");
-      await sqliteAddColumnIfMissing("delivery_reports", "admin_user_id INTEGER");
-      hasAdminUserId = true; hasAdminReply = true;
+      await sqliteAddColumnIfMissing(
+        "delivery_reports",
+        "admin_user_id INTEGER"
+      );
+      hasAdminUserId = true;
+      hasAdminReply = true;
     }
 
-    let select =
-      `SELECT dr.id, dr.delivery_id, dr.reporter_id, dr.type, dr.content, dr.images_json,
+    let select = `SELECT dr.id, dr.delivery_id, dr.reporter_id, dr.type, dr.content, dr.images_json,
               dr.status, dr.admin_note, dr.created_at, dr.updated_at,
               ru.name AS reporter_name`;
 
@@ -602,8 +695,7 @@ r.get("/:id/reports", requireAuth, async (req, res) => {
       select += `, NULL AS admin_user_id, NULL AS admin_reply, NULL AS handled_by_name`;
     }
 
-    let sql =
-      `${select}
+    let sql = `${select}
          FROM delivery_reports dr
          LEFT JOIN users ru ON ${
            useMySQL
@@ -615,7 +707,11 @@ r.get("/:id/reports", requireAuth, async (req, res) => {
       sql += ` LEFT JOIN users au ON au.id COLLATE utf8mb4_bin = dr.admin_user_id COLLATE utf8mb4_bin`;
     }
 
-    sql += ` WHERE ${ useMySQL ? `dr.delivery_id COLLATE utf8mb4_bin = ${CAST_BIN}` : `dr.delivery_id = ?` }
+    sql += ` WHERE ${
+      useMySQL
+        ? `dr.delivery_id COLLATE utf8mb4_bin = ${CAST_BIN}`
+        : `dr.delivery_id = ?`
+    }
              ORDER BY dr.created_at DESC, dr.updated_at DESC`;
 
     const rows = await dbAll(sql, [deliveryId]);
@@ -639,7 +735,12 @@ r.get("/:id/reports", requireAuth, async (req, res) => {
     return res.json({ items });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "list_reports_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({
+        error: "list_reports_failed",
+        message: e?.message || "Server error",
+      });
   }
 });
 
@@ -650,8 +751,9 @@ r.patch("/:id/reports/:rid/reply", requireAuth, async (req, res) => {
     if (!isAdmin(req.user)) return res.status(403).json({ error: "forbidden" });
 
     const deliveryId = String(req.params.id || "");
-    const rid        = String(req.params.rid || "");
-    if (!deliveryId || !rid) return res.status(400).json({ error: "invalid_input" });
+    const rid = String(req.params.rid || "");
+    if (!deliveryId || !rid)
+      return res.status(400).json({ error: "invalid_input" });
 
     const report = await dbGet(
       useMySQL
@@ -660,16 +762,29 @@ r.patch("/:id/reports/:rid/reply", requireAuth, async (req, res) => {
         : `SELECT id, delivery_id FROM delivery_reports WHERE id = ?`,
       [rid]
     );
-    if (!report || report.delivery_id !== deliveryId) return res.status(404).json({ error: "report_not_found" });
+    if (!report || report.delivery_id !== deliveryId)
+      return res.status(404).json({ error: "report_not_found" });
 
     let { reply = "", status = "" } = req.body || {};
     reply = String(reply || "");
-    status = String(status || "").toLowerCase().trim();
+    status = String(status || "")
+      .toLowerCase()
+      .trim();
 
-    const allowStatus = new Set(["open", "reviewing", "in_progress", "resolved", "rejected", "closed", ""]);
-    if (!allowStatus.has(status)) return res.status(400).json({ error: "invalid_status" });
+    const allowStatus = new Set([
+      "open",
+      "reviewing",
+      "in_progress",
+      "resolved",
+      "rejected",
+      "closed",
+      "",
+    ]);
+    if (!allowStatus.has(status))
+      return res.status(400).json({ error: "invalid_status" });
 
-    let hasAdminUserId = false, hasAdminReply = false;
+    let hasAdminUserId = false,
+      hasAdminReply = false;
     if (useMySQL) {
       [hasAdminUserId, hasAdminReply] = await Promise.all([
         mysqlHasColumn("delivery_reports", "admin_user_id"),
@@ -677,31 +792,63 @@ r.patch("/:id/reports/:rid/reply", requireAuth, async (req, res) => {
       ]);
     } else {
       await sqliteAddColumnIfMissing("delivery_reports", "admin_reply TEXT");
-      await sqliteAddColumnIfMissing("delivery_reports", "admin_user_id INTEGER");
-      hasAdminUserId = true; hasAdminReply = true;
+      await sqliteAddColumnIfMissing(
+        "delivery_reports",
+        "admin_user_id INTEGER"
+      );
+      hasAdminUserId = true;
+      hasAdminReply = true;
     }
 
     const sets = ["admin_note = ?"];
     const params = [reply];
-    if (hasAdminReply)    { sets.push("admin_reply = ?"); params.push(reply); }
-    if (hasAdminUserId)   { sets.push("admin_user_id = ?"); params.push(req.user.id); }
-    if (status)           { sets.push("status = ?"); params.push(status); }
+    if (hasAdminReply) {
+      sets.push("admin_reply = ?");
+      params.push(reply);
+    }
+    if (hasAdminUserId) {
+      sets.push("admin_user_id = ?");
+      params.push(req.user.id);
+    }
+    if (status) {
+      sets.push("status = ?");
+      params.push(status);
+    }
     sets.push(useMySQL ? "updated_at = NOW()" : "updated_at = datetime('now')");
 
     const sql = useMySQL
-      ? `UPDATE delivery_reports SET ${sets.join(", ")} WHERE id COLLATE utf8mb4_bin = ${CAST_BIN}`
+      ? `UPDATE delivery_reports SET ${sets.join(
+          ", "
+        )} WHERE id COLLATE utf8mb4_bin = ${CAST_BIN}`
       : `UPDATE delivery_reports SET ${sets.join(", ")} WHERE id = ?`;
     params.push(rid);
     await dbRun(sql, params);
 
-    return res.json({ ok: true, report_id: rid, delivery_id: deliveryId, status: status || undefined, reply });
+    return res.json({
+      ok: true,
+      report_id: rid,
+      delivery_id: deliveryId,
+      status: status || undefined,
+      reply,
+    });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ error: "reply_report_failed", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({
+        error: "reply_report_failed",
+        message: e?.message || "Server error",
+      });
   }
 });
 
 /* ==================== small utils ==================== */
-function safeParseJSON(s, d) { try { return JSON.parse(s); } catch { return d; } }
+function safeParseJSON(s, d) {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return d;
+  }
+}
 
 export default r;

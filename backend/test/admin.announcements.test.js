@@ -33,11 +33,6 @@ jest.unstable_mockModule("../src/middlewares/roles.js", () => ({
   requireRole: () => (req, res, next) => next(),
 }));
 
-// Giả lập ensure-mysql để tránh lỗi khi route load
-jest.unstable_mockModule("../src/lib/ensure-mysql.js", () => ({
-  ensureMySQLSchema: jest.fn().mockResolvedValue(undefined),
-}));
-
 // Hàm tiện ích để tạo một token JWT giả cho việc test xác thực
 const signTestToken = (payload) => {
   return jwt.sign(payload, "test_secret", { expiresIn: "1d" });
@@ -93,17 +88,10 @@ describe.each([
   // Chạy trước mỗi test để reset các mock
   beforeEach(() => {
     // Reset tất cả các mock trước mỗi test để đảm bảo sự độc lập
-    jest.clearAllMocks();
-    // Đảm bảo mọi truy vấn DB đều trả về mảng rỗng (tránh undefined.length)
-    mockDbFunctions.all.mockResolvedValue([]);
-    mockDbFunctions.run.mockResolvedValue({});
-    mockDbFunctions.get.mockResolvedValue(null);
-    mockDbFunctions.query.mockResolvedValue([[], null]); // MySQL format: [rows, metadata]
-    // Nếu có chỗ nào gọi trực tiếp db.query mà không destructure, trả về [] luôn
-    db.query = jest.fn().mockResolvedValue([[], null]);
-    db.all = jest.fn().mockResolvedValue([]);
-    // Reset sqlite prepare mock
-    db.prepare?.mockReturnValue(mockDbFunctions);
+    mockDbFunctions.run.mockClear();
+    mockDbFunctions.get.mockClear();
+    mockDbFunctions.all.mockClear();
+    mockDbFunctions.query.mockClear();
   });
 
   // Test case: Lấy danh sách thông báo thành công
@@ -119,7 +107,6 @@ describe.each([
     ];
     // Giả lập DB trả về dữ liệu mẫu
     mockDbFunctions.all.mockResolvedValue(mockData);
-    db.all = jest.fn().mockResolvedValue(mockData);
 
     // Gửi request và kiểm tra kết quả
     const res = await request(app)

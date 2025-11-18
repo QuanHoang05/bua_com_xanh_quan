@@ -45,6 +45,11 @@ describe("Admin Backup/Restore Routes (/api/admin/backup, /api/admin/restore)", 
       process.env.DB_DRIVER = "sqlite";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.js", () => ({
+        db: {
+          prepare: jest.fn(),
+        },
+      }));
 
       const dbModule = await import("../src/lib/db.js");
       sqliteDb = dbModule.db;
@@ -91,6 +96,15 @@ describe("Admin Backup/Restore Routes (/api/admin/backup, /api/admin/restore)", 
       process.env.DB_DRIVER = "mysql";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
+        db: {
+          get: jest.fn(),
+          all: jest.fn(),
+          run: jest.fn(),
+          query: jest.fn(),
+        },
+      }));
+
 
       const dbModule = await import("../src/lib/db.mysql.js");
       mysqlDb = dbModule.db;

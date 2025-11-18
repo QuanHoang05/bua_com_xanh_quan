@@ -35,7 +35,7 @@ jest.unstable_mockModule("bcrypt", () => ({
   },
 }));
 
-// Giả lập các module DB
+// Giả lập các module DB - SẼ ĐƯỢC GỌI LẠI TRONG beforeAll
 jest.unstable_mockModule("../src/lib/db.js", () => ({
   db: {
     prepare: jest.fn(() => ({ get: jest.fn(), run: jest.fn() })),
@@ -86,6 +86,11 @@ describe("Auth Routes", () => {
       process.env.DB_DRIVER = "sqlite";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.js", () => ({
+        db: {
+          prepare: jest.fn(() => ({ get: jest.fn(), run: jest.fn() })),
+        },
+      }));
 
       const authModule = await import("../src/routes/auth.js");
       const dbModule = await import("../src/lib/db.js");
@@ -344,6 +349,15 @@ describe("Auth Routes", () => {
       process.env.DB_DRIVER = "mysql";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
+        db: {
+          query: jest.fn(),
+          get: jest.fn(),
+          all: jest.fn(),
+          run: jest.fn(),
+        },
+      }));
+
 
       const authModule = await import("../src/routes/auth.js");
       const dbModule = await import("../src/lib/db.mysql.js");

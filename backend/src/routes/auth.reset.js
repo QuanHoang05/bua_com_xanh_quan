@@ -1,29 +1,69 @@
 ﻿// backend/src/routes/auth.reset.js
 import { Router } from "express";
-import bcrypt from 'bcrypt';
+import bcrypt from "bcrypt";
 
 import nodemailer from "nodemailer";
 import crypto from "crypto";
 
 /* ---------- DB bootstrap (MySQL | SQLite) ---------- */
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
-let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+const modDb = await import("../lib/db.js");
+// Use the module namespace object as a live binding source so
+// callers always read the current `db` exported by the dispatcher.
+const dbModule = modDb;
+const getDb = () => dbModule.db;
+// Debug: log db shape at import time (read via getter)
+if ((process.env.NODE_ENV || "").toLowerCase() === "test") {
+  try {
+    const cur = getDb();
+    console.log("[auth.reset] imported db keys:", Object.keys(cur || {}));
+    console.log("[auth.reset] typeof db.prepare:", typeof (cur && cur.prepare));
+    console.log("[auth.reset] typeof db.all:", typeof (cur && cur.all));
+  } catch (e) {
+    console.log("[auth.reset] db import debug error", e && e.message);
+  }
+}
 
 async function dbGet(sql, params = []) {
+  const db = getDb();
   if (useMySQL) {
     if (typeof db.get === "function") return await db.get(sql, params);
     const [rows] = await db.query(sql, params);
     return rows?.[0] ?? null;
   }
+  if ((process.env.NODE_ENV || "").toLowerCase() === "test") {
+    console.log(
+      "[auth.reset] dbGet: db before prepare:",
+      !!db,
+      typeof db,
+      typeof (db && db.prepare)
+    );
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbRun(sql, params = []) {
+  const db = getDb();
   if (useMySQL) {
     if (typeof db.run === "function") return await db.run(sql, params);
     const [ret] = await db.query(sql, params);
     return ret;
+  }
+  if ((process.env.NODE_ENV || "").toLowerCase() === "test") {
+    console.log(
+      "[auth.reset] dbRun: db before prepare:",
+      !!db,
+      typeof db,
+      typeof (db && db.prepare)
+    );
+  }
+  if (!db || typeof (db && db.prepare) !== "function") {
+    console.error("[auth.reset] DB not initialized at dbRun", {
+      dbType: typeof db,
+      hasPrepare: db ? typeof db.prepare : "no-db",
+      NODE_ENV: process.env.NODE_ENV,
+      DB_DRIVER: process.env.DB_DRIVER,
+    });
+    throw new Error("[auth.reset] DB_NOT_INITIALIZED");
   }
   return db.prepare(sql).run(...params);
 }
@@ -44,7 +84,9 @@ if (useMySQL) {
       INDEX (email), INDEX (purpose), INDEX (code)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
   `);
-  try { await dbRun(`ALTER TABLE otp_codes ADD COLUMN expires_at_ms BIGINT NULL`); } catch {}
+  try {
+    await dbRun(`ALTER TABLE otp_codes ADD COLUMN expires_at_ms BIGINT NULL`);
+  } catch {}
 } else {
   await dbRun(`
     CREATE TABLE IF NOT EXISTS otp_codes (
@@ -58,7 +100,9 @@ if (useMySQL) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
-  try { await dbRun(`ALTER TABLE otp_codes ADD COLUMN expires_at_ms INTEGER NULL`); } catch {}
+  try {
+    await dbRun(`ALTER TABLE otp_codes ADD COLUMN expires_at_ms INTEGER NULL`);
+  } catch {}
 }
 
 /* ---------- Phát hiện kiểu cột id hiện có để quyết định có cần UUID hay không ---------- */
@@ -67,10 +111,11 @@ if (useMySQL) {
   try {
     const [cols] = await db.query("SHOW COLUMNS FROM otp_codes LIKE 'id'");
     const c = Array.isArray(cols) ? cols[0] : cols;
-    const type  = String(c?.Type || "");
+    const type = String(c?.Type || "");
     const extra = String(c?.Extra || "");
     // nếu KHÔNG auto_increment và kiểu CHAR/VARCHAR thì buộc phải chèn id thủ công
-    OTP_NEEDS_UUID = !/auto_increment/i.test(extra) && /char|varchar/i.test(type);
+    OTP_NEEDS_UUID =
+      !/auto_increment/i.test(extra) && /char|varchar/i.test(type);
     // dọn rác: nếu có bản ghi id='' do non-strict mode, đổi sang UUID
     await dbRun("UPDATE otp_codes SET id=UUID() WHERE id=''");
   } catch {}
@@ -78,14 +123,27 @@ if (useMySQL) {
 
 /* ---------- Mail helper ---------- */
 async function sendMail({ to, subject, text, html }) {
-  if (!process.env.SMTP_HOST) { console.log("[MAIL-FALLBACK]", { to, subject, text }); return { ok: true, fallback: true }; }
+  if (!process.env.SMTP_HOST) {
+    console.log("[MAIL-FALLBACK]", { to, subject, text });
+    return { ok: true, fallback: true };
+  }
   const port = Number(process.env.SMTP_PORT || 465);
-  const secure = String(process.env.SMTP_SECURE ?? (port === 465)).toLowerCase() === "true" || port === 465;
+  const secure =
+    String(process.env.SMTP_SECURE ?? port === 465).toLowerCase() === "true" ||
+    port === 465;
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST, port, secure,
-    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined,
+    host: process.env.SMTP_HOST,
+    port,
+    secure,
+    auth: process.env.SMTP_USER
+      ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+      : undefined,
   });
-  const from = process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || "no-reply@buacomxanh.local";
+  const from =
+    process.env.EMAIL_FROM ||
+    process.env.SMTP_FROM ||
+    process.env.SMTP_USER ||
+    "no-reply@buacomxanh.local";
   await transporter.sendMail({ from, to, subject, text, html });
   return { ok: true };
 }
@@ -108,7 +166,9 @@ async function insertOtp({ email, code, expiresMs }) {
         : [email, code, expiresMs, expiresMs];
       await dbRun(
         `INSERT INTO otp_codes ${cols}
-         VALUES (${withId ? "?, " : ""}?, ?, 'reset', FROM_UNIXTIME(?/1000), ?, ${NOW_SQL})`,
+         VALUES (${
+           withId ? "?, " : ""
+         }?, ?, 'reset', FROM_UNIXTIME(?/1000), ?, ${NOW_SQL})`,
         params
       );
     } else {
@@ -120,14 +180,22 @@ async function insertOtp({ email, code, expiresMs }) {
     }
   } catch (e) {
     const msg = String(e?.message || "");
-    const noExpiresCol = /unknown column|no such column|expires_at_ms/i.test(msg);
+    const noExpiresCol = /unknown column|no such column|expires_at_ms/i.test(
+      msg
+    );
     if (noExpiresCol) {
       if (useMySQL) {
-        const cols = withId ? "(id, email, code, purpose, expires_at, created_at)" : "(email, code, purpose, expires_at, created_at)";
-        const params = withId ? [id, email, code, expiresMs] : [email, code, expiresMs];
+        const cols = withId
+          ? "(id, email, code, purpose, expires_at, created_at)"
+          : "(email, code, purpose, expires_at, created_at)";
+        const params = withId
+          ? [id, email, code, expiresMs]
+          : [email, code, expiresMs];
         await dbRun(
           `INSERT INTO otp_codes ${cols}
-           VALUES (${withId ? "?, " : ""}?, ?, 'reset', FROM_UNIXTIME(?/1000), ${NOW_SQL})`,
+           VALUES (${
+             withId ? "?, " : ""
+           }?, ?, 'reset', FROM_UNIXTIME(?/1000), ${NOW_SQL})`,
           params
         );
       } else {
@@ -147,8 +215,11 @@ async function insertOtp({ email, code, expiresMs }) {
 /* ===== POST /api/auth/forgot-password { email } ===== */
 authResetRouter.post("/forgot-password", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    if (!email) return res.status(400).json({ ok:false, message:"Thiếu email" });
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!email)
+      return res.status(400).json({ ok: false, message: "Thiếu email" });
 
     const code = genCode();
     const expiresMs = Date.now() + 10 * 60 * 1000; // 10 phút
@@ -157,13 +228,21 @@ authResetRouter.post("/forgot-password", async (req, res) => {
     const subj = "[Bữa Cơm Xanh] Mã OTP đặt lại mật khẩu";
     const text = `Mã OTP: ${code} (hết hạn sau 10 phút).`;
     const html = `<p>Mã OTP của bạn là: <b style="font-size:20px">${code}</b></p><p>Hết hạn sau 10 phút.</p>`;
-    try { await sendMail({ to: email, subject: subj, text, html }); } catch (err) { console.warn("MAIL_ERROR", err?.message); }
+    try {
+      await sendMail({ to: email, subject: subj, text, html });
+    } catch (err) {
+      console.warn("MAIL_ERROR", err?.message);
+    }
 
     const dev = (process.env.NODE_ENV || "development") === "development";
-    return res.json({ ok:true, message:"Nếu email tồn tại, mã OTP đã được gửi.", ...(dev ? { devCode: code } : {}) });
+    return res.json({
+      ok: true,
+      message: "Nếu email tồn tại, mã OTP đã được gửi.",
+      ...(dev ? { devCode: code } : {}),
+    });
   } catch (e) {
     console.error("FORGOT_PASSWORD_ERROR", e?.message);
-    return res.status(500).json({ ok:false, message:"Lỗi máy chủ" });
+    return res.status(500).json({ ok: false, message: "Lỗi máy chủ" });
   }
 });
 
@@ -176,58 +255,89 @@ authResetRouter.post("/resend-otp", async (req, res) => {
 /* ===== POST /api/auth/verify-otp { email, code|otp } ===== */
 authResetRouter.post("/verify-otp", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const raw   = String(req.body?.code ?? req.body?.otp ?? "").trim();
-    const code  = raw.replace(/\D/g, "");
-    if (!email) return res.status(400).json({ ok:false, message:"Thiếu email" });
-    if (!/^\d{6}$/.test(code)) return res.status(400).json({ ok:false, message:"Mã OTP phải gồm 6 chữ số" });
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    const raw = String(req.body?.code ?? req.body?.otp ?? "").trim();
+    const code = raw.replace(/\D/g, "");
+    if (!email)
+      return res.status(400).json({ ok: false, message: "Thiếu email" });
+    if (!/^\d{6}$/.test(code))
+      return res
+        .status(400)
+        .json({ ok: false, message: "Mã OTP phải gồm 6 chữ số" });
 
     const row = await dbGet(
       "SELECT * FROM otp_codes WHERE email=? AND purpose='reset' ORDER BY created_at DESC, id DESC LIMIT 1",
       [email]
     );
-    if (!row) return res.status(400).json({ ok:false, message:"Không tìm thấy OTP cho email này" });
+    if (!row)
+      return res
+        .status(400)
+        .json({ ok: false, message: "Không tìm thấy OTP cho email này" });
 
-    const expMs = row.expires_at_ms != null ? Number(row.expires_at_ms) : new Date(row.expires_at).getTime();
-    if (!Number.isFinite(expMs) || Date.now() > expMs) return res.status(400).json({ ok:false, message:"OTP đã hết hạn" });
-    if (row.used_at) return res.status(400).json({ ok:false, message:"OTP đã được dùng" });
-    if (String(row.code) !== code) return res.status(400).json({ ok:false, message:"OTP không đúng" });
+    const expMs =
+      row.expires_at_ms != null
+        ? Number(row.expires_at_ms)
+        : new Date(row.expires_at).getTime();
+    if (!Number.isFinite(expMs) || Date.now() > expMs)
+      return res.status(400).json({ ok: false, message: "OTP đã hết hạn" });
+    if (row.used_at)
+      return res.status(400).json({ ok: false, message: "OTP đã được dùng" });
+    if (String(row.code) !== code)
+      return res.status(400).json({ ok: false, message: "OTP không đúng" });
 
-    return res.json({ ok:true, message:"OTP hợp lệ" });
+    return res.json({ ok: true, message: "OTP hợp lệ" });
   } catch (e) {
     console.error("VERIFY_OTP_ERROR", e?.message);
-    return res.status(500).json({ ok:false, message:"Lỗi máy chủ" });
+    return res.status(500).json({ ok: false, message: "Lỗi máy chủ" });
   }
 });
 
 /* ===== POST /api/auth/reset-password { email, code, newPassword } ===== */
 authResetRouter.post("/reset-password", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const raw   = String(req.body?.code || "").trim();
-    const code  = raw.replace(/\D/g, "");
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+    const raw = String(req.body?.code || "").trim();
+    const code = raw.replace(/\D/g, "");
     const newPassword = String(req.body?.newPassword || "");
     if (!email || !/^\d{6}$/.test(code) || newPassword.length < 8) {
-      return res.status(400).json({ ok:false, message:"Thiếu dữ liệu hoặc mật khẩu < 8 ký tự" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "Thiếu dữ liệu hoặc mật khẩu < 8 ký tự" });
     }
 
     const row = await dbGet(
       "SELECT * FROM otp_codes WHERE email=? AND code=? AND purpose='reset' AND used_at IS NULL ORDER BY created_at DESC, id DESC LIMIT 1",
       [email, code]
     );
-    if (!row) return res.status(400).json({ ok:false, message:"OTP không hợp lệ" });
+    if (!row)
+      return res.status(400).json({ ok: false, message: "OTP không hợp lệ" });
 
-    const expMs = row.expires_at_ms != null ? Number(row.expires_at_ms) : new Date(row.expires_at).getTime();
-    if (!Number.isFinite(expMs) || Date.now() > expMs) return res.status(400).json({ ok:false, message:"OTP đã hết hạn" });
+    const expMs =
+      row.expires_at_ms != null
+        ? Number(row.expires_at_ms)
+        : new Date(row.expires_at).getTime();
+    if (!Number.isFinite(expMs) || Date.now() > expMs)
+      return res.status(400).json({ ok: false, message: "OTP đã hết hạn" });
 
     const hash = await bcrypt.hash(newPassword, 10);
-    await dbRun("UPDATE users SET password_hash=?, updated_at=" + NOW_SQL + " WHERE email=?", [hash, email]);
-    await dbRun("UPDATE otp_codes SET used_at=" + NOW_SQL + " WHERE id=?", [row.id]);
+    await dbRun(
+      "UPDATE users SET password_hash=?, updated_at=" +
+        NOW_SQL +
+        " WHERE email=?",
+      [hash, email]
+    );
+    await dbRun("UPDATE otp_codes SET used_at=" + NOW_SQL + " WHERE id=?", [
+      row.id,
+    ]);
 
-    return res.json({ ok:true, message:"Đặt lại mật khẩu thành công" });
+    return res.json({ ok: true, message: "Đặt lại mật khẩu thành công" });
   } catch (e) {
     console.error("RESET_PASSWORD_ERROR", e?.message);
-    return res.status(500).json({ ok:false, message:"Lỗi máy chủ" });
+    return res.status(500).json({ ok: false, message: "Lỗi máy chủ" });
   }
 });
 

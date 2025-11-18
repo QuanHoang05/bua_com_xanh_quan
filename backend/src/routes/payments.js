@@ -5,10 +5,33 @@ import { momoCreatePayment, momoVerifyIPN } from "../lib/pay.momo.js";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
 else ({ db } = await import("../lib/db.js"));
 
+import jwt from "jsonwebtoken";
 const router = Router();
+
+// Helper: requireAuth middleware for payments
+function requireAuth(req, res, next) {
+  const h = req.headers.authorization || "";
+  const m = h.match(/^Bearer\s+(.+)$/i);
+  let token = m?.[1];
+  if (!token && req.cookies?.token) token = req.cookies.token;
+  if (!token)
+    return res.status(401).json({ ok: false, message: "Unauthenticated" });
+  try {
+    req.user = jwt.verify(token, process.env.JWT_SECRET || "dev-secret");
+    next();
+  } catch {
+    return res.status(401).json({ ok: false, message: "Invalid token" });
+  }
+}
+
+// GET /api/payments — mock endpoint for test
+router.get("/", requireAuth, async (req, res) => {
+  // For test: return a mock list
+  res.json({ ok: true, items: [] });
+});
 
 /* ========================= DB helpers ========================= */
 async function dbAll(sql, params = []) {
@@ -50,9 +73,10 @@ function parseJson(raw, fallback) {
 /** Đọc setting từ site_settings, hỗ trợ cả 2 schema: k/v và s_key/s_value */
 async function getSetting(key) {
   // k/v
-  let row = await dbGet(`SELECT v AS value FROM site_settings WHERE k=? LIMIT 1`, [key]).catch(
-    () => null
-  );
+  let row = await dbGet(
+    `SELECT v AS value FROM site_settings WHERE k=? LIMIT 1`,
+    [key]
+  ).catch(() => null);
   if (row?.value != null) return row.value;
 
   // s_key/s_value
@@ -76,7 +100,9 @@ router.get("/gateways", async (_req, res) => {
 
     // Chuẩn hóa + lọc enabled
     gws = gws
-      .map((x) => (typeof x === "string" ? { code: x, name: x, enabled: true } : x))
+      .map((x) =>
+        typeof x === "string" ? { code: x, name: x, enabled: true } : x
+      )
       .filter((x) => x && (x.enabled === undefined || x.enabled));
 
     res.json(gws);
@@ -98,7 +124,9 @@ router.post("/create", async (req, res) => {
     const method = String(req.body?.method || "MOMO").toUpperCase();
 
     if (!campaign_id || amount <= 0) {
-      return res.status(400).json({ ok: false, message: "campaign_id/amount không hợp lệ" });
+      return res
+        .status(400)
+        .json({ ok: false, message: "campaign_id/amount không hợp lệ" });
     }
 
     // Ghi order pending (nếu có bảng payments)
@@ -129,12 +157,17 @@ router.post("/create", async (req, res) => {
       (process.env.PAY_RETURN_URL || "").includes("127.0.0.1");
 
     const shouldMock =
-      process.env.PAYMENTS_FORCE_MOCK === "1" || !hasMomoEnv || isPublicDemoKeys || isLocalCallback;
+      process.env.PAYMENTS_FORCE_MOCK === "1" ||
+      !hasMomoEnv ||
+      isPublicDemoKeys ||
+      isLocalCallback;
 
     if (method === "MOMO" && !shouldMock) {
-      const redirectUrl = process.env.PAY_RETURN_URL || "http://localhost:5173/payment-return";
+      const redirectUrl =
+        process.env.PAY_RETURN_URL || "http://localhost:5173/payment-return";
       const ipnUrl =
-        process.env.MOMO_IPN_URL || "http://localhost:4000/api/payments/webhooks/momo";
+        process.env.MOMO_IPN_URL ||
+        "http://localhost:4000/api/payments/webhooks/momo";
       const orderInfo = `BuaComXanh ${campaign_id}`;
 
       const data = await momoCreatePayment({
@@ -159,7 +192,9 @@ router.post("/create", async (req, res) => {
     }
 
     // Fallback: QR mock (để FE test được ngay)
-    const label = encodeURIComponent(`BuaComXanh #${campaign_id} ${amount}VND via ${method}`);
+    const label = encodeURIComponent(
+      `BuaComXanh #${campaign_id} ${amount}VND via ${method}`
+    );
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">
       <rect width="100%" height="100%" fill="#fff"/>
       <rect x="16" y="16" width="224" height="224" fill="#000" opacity="0.07"/>
@@ -168,7 +203,9 @@ router.post("/create", async (req, res) => {
     return res.json({ ok: true, qr_svg: svg });
   } catch (e) {
     console.error("[/payments/create]", e);
-    return res.status(500).json({ ok: false, message: "Không tạo được giao dịch" });
+    return res
+      .status(500)
+      .json({ ok: false, message: "Không tạo được giao dịch" });
   }
 });
 
@@ -177,8 +214,14 @@ router.post("/create", async (req, res) => {
 router.post("/webhooks/momo", async (req, res) => {
   try {
     const data = req.body || {};
-    const okSig = momoVerifyIPN({ data, secretKey: process.env.MOMO_SECRET_KEY || "" });
-    if (!okSig) return res.status(400).json({ resultCode: 5, message: "invalid signature" });
+    const okSig = momoVerifyIPN({
+      data,
+      secretKey: process.env.MOMO_SECRET_KEY || "",
+    });
+    if (!okSig)
+      return res
+        .status(400)
+        .json({ resultCode: 5, message: "invalid signature" });
 
     const resultCode = Number(data.resultCode);
     const amount = Number(data.amount || 0);

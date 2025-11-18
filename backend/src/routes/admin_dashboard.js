@@ -6,7 +6,7 @@ import "dotenv/config";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
 else ({ db } = await import("../lib/db.js"));
 
 /* ---------------- DB helpers (agnostic) ---------------- */
@@ -36,15 +36,21 @@ const safeArr = (v) => (Array.isArray(v) ? v : []);
 /* ---------------- Core aggregations ---------------- */
 async function deliveriesAgg() {
   // tổng & theo status
-  const total = await dbGet("SELECT COUNT(*) AS c FROM deliveries").catch(() => ({ c: 0 }));
-  const byStatus = await dbAll("SELECT status, COUNT(*) AS count FROM deliveries GROUP BY status").catch(() => []);
+  const total = await dbGet("SELECT COUNT(*) AS c FROM deliveries").catch(
+    () => ({ c: 0 })
+  );
+  const byStatus = await dbAll(
+    "SELECT status, COUNT(*) AS count FROM deliveries GROUP BY status"
+  ).catch(() => []);
 
   const deliveredTotal = await dbGet(
     "SELECT COUNT(*) AS c FROM deliveries WHERE status='delivered'"
   ).catch(() => ({ c: 0 }));
 
   // hôm nay
-  const todayCount = await dbGet(`SELECT COUNT(*) AS c FROM deliveries WHERE ${BETWEEN_TODAY_SQL}`).catch(() => ({ c: 0 }));
+  const todayCount = await dbGet(
+    `SELECT COUNT(*) AS c FROM deliveries WHERE ${BETWEEN_TODAY_SQL}`
+  ).catch(() => ({ c: 0 }));
   const todayDelivered = await dbGet(
     `SELECT COUNT(*) AS c FROM deliveries WHERE status='delivered' AND ${BETWEEN_TODAY_SQL}`
   ).catch(() => ({ c: 0 }));
@@ -53,7 +59,9 @@ async function deliveriesAgg() {
   const weekScope = useMySQL
     ? "DATE(created_at) BETWEEN DATE_SUB(DATE(NOW()), INTERVAL 6 DAY) AND DATE(NOW())"
     : "DATE(created_at) BETWEEN date('now','-6 day') AND date('now')";
-  const weekTotal = await dbGet(`SELECT COUNT(*) AS c FROM deliveries WHERE ${weekScope}`).catch(() => ({ c: 0 }));
+  const weekTotal = await dbGet(
+    `SELECT COUNT(*) AS c FROM deliveries WHERE ${weekScope}`
+  ).catch(() => ({ c: 0 }));
   const weekDelivered = await dbGet(
     `SELECT COUNT(*) AS c FROM deliveries WHERE status='delivered' AND ${weekScope}`
   ).catch(() => ({ c: 0 }));
@@ -62,7 +70,9 @@ async function deliveriesAgg() {
   const monthScope = useMySQL
     ? "DATE(created_at) >= DATE_FORMAT(NOW(),'%Y-%m-01')"
     : "DATE(created_at) >= date('now','start of month')";
-  const monthTotal = await dbGet(`SELECT COUNT(*) AS c FROM deliveries WHERE ${monthScope}`).catch(() => ({ c: 0 }));
+  const monthTotal = await dbGet(
+    `SELECT COUNT(*) AS c FROM deliveries WHERE ${monthScope}`
+  ).catch(() => ({ c: 0 }));
   const monthDelivered = await dbGet(
     `SELECT COUNT(*) AS c FROM deliveries WHERE status='delivered' AND ${monthScope}`
   ).catch(() => ({ c: 0 }));
@@ -77,7 +87,7 @@ async function deliveriesAgg() {
 
   // theo shipper (top 10)
   const byShipper = await dbAll(
-    (useMySQL
+    useMySQL
       ? `SELECT d.shipper_id, u.name AS shipper_name,
                 COUNT(*) AS total,
                 SUM(CASE WHEN d.status='delivered' THEN 1 ELSE 0 END) AS delivered
@@ -93,7 +103,7 @@ async function deliveriesAgg() {
            LEFT JOIN users u ON u.id = d.shipper_id
           GROUP BY d.shipper_id, u.name
           ORDER BY delivered DESC, total DESC
-          LIMIT 10`)
+          LIMIT 10`
   ).catch(() => []);
 
   // theo campaign (top 10)
@@ -134,40 +144,58 @@ async function deliveriesAgg() {
 
   return {
     total: totalNum,
-    byStatus: safeArr(byStatus).map(r => ({ status: r.status ?? "unknown", count: num(r.count ?? r.c) })),
+    byStatus: safeArr(byStatus).map((r) => ({
+      status: r.status ?? "unknown",
+      count: num(r.count ?? r.c),
+    })),
     delivered_total: deliveredNum,
     success_rate: rate, // 0..1
     today: {
       total: num(todayCount?.c),
       delivered: num(todayDelivered?.c),
-      rate: num(todayDelivered?.c) && num(todayCount?.c) ? num(todayDelivered?.c) / num(todayCount?.c) : 0,
+      rate:
+        num(todayDelivered?.c) && num(todayCount?.c)
+          ? num(todayDelivered?.c) / num(todayCount?.c)
+          : 0,
       rescued_meals: num(sumMealsToday?.c),
     },
     last7d: {
       total: num(weekTotal?.c),
       delivered: num(weekDelivered?.c),
-      rate: num(weekDelivered?.c) && num(weekTotal?.c) ? num(weekDelivered?.c) / num(weekTotal?.c) : 0,
-      series: last7.map(r => ({ day: r.d, total: num(r.total), delivered: num(r.delivered) })),
+      rate:
+        num(weekDelivered?.c) && num(weekTotal?.c)
+          ? num(weekDelivered?.c) / num(weekTotal?.c)
+          : 0,
+      series: last7.map((r) => ({
+        day: r.d,
+        total: num(r.total),
+        delivered: num(r.delivered),
+      })),
     },
     month: {
       total: num(monthTotal?.c),
       delivered: num(monthDelivered?.c),
-      rate: num(monthDelivered?.c) && num(monthTotal?.c) ? num(monthDelivered?.c) / num(monthTotal?.c) : 0,
+      rate:
+        num(monthDelivered?.c) && num(monthTotal?.c)
+          ? num(monthDelivered?.c) / num(monthTotal?.c)
+          : 0,
     },
     rescued_meals_all: num(sumMealsAll?.c),
-    top_shippers: byShipper.map(r => ({
+    top_shippers: byShipper.map((r) => ({
       shipper_id: r.shipper_id,
       shipper_name: r.shipper_name ?? "—",
       total: num(r.total),
       delivered: num(r.delivered),
-      rate: num(r.delivered) && num(r.total) ? num(r.delivered) / num(r.total) : 0,
+      rate:
+        num(r.delivered) && num(r.total) ? num(r.delivered) / num(r.total) : 0,
     })),
-    top_campaigns: byCampaign.map(r => ({
+    top_campaigns: byCampaign.map((r) => ({
       campaign_id: r.campaign_id,
       campaign_title: r.campaign_title ?? "—",
       total: num(r.total),
       delivered: num(r.delivered),
-      rate: num(r.delivered) && num(r.total) ? num(r.delivered) / num(r.total) : 0,
+      rate:
+        num(r.delivered) && num(r.total) ? num(r.delivered) / num(r.total) : 0,
     })),
   };
 }
@@ -182,12 +210,20 @@ const router = Router();
 router.get("/stats", async (_req, res) => {
   try {
     /* ---------- USERS ---------- */
-    const usersTotal = await dbGet("SELECT COUNT(*) AS c FROM users").catch(() => ({ c: 0 }));
-    const usersByRole = await dbAll("SELECT role, COUNT(*) AS count FROM users GROUP BY role").catch(() => []);
+    const usersTotal = await dbGet("SELECT COUNT(*) AS c FROM users").catch(
+      () => ({ c: 0 })
+    );
+    const usersByRole = await dbAll(
+      "SELECT role, COUNT(*) AS count FROM users GROUP BY role"
+    ).catch(() => []);
 
     /* ---------- CAMPAIGNS ---------- */
-    const campTotal = await dbGet("SELECT COUNT(*) AS c FROM campaigns").catch(() => ({ c: 0 }));
-    const campActive = await dbGet("SELECT COUNT(*) AS c FROM campaigns WHERE status='active'").catch(() => ({ c: 0 }));
+    const campTotal = await dbGet("SELECT COUNT(*) AS c FROM campaigns").catch(
+      () => ({ c: 0 })
+    );
+    const campActive = await dbGet(
+      "SELECT COUNT(*) AS c FROM campaigns WHERE status='active'"
+    ).catch(() => ({ c: 0 }));
     const campAgg = await dbGet(
       `SELECT
           COALESCE(SUM(raised_amount),0)      AS raised_amount,
@@ -195,13 +231,26 @@ router.get("/stats", async (_req, res) => {
           COALESCE(SUM(meal_received_qty),0)  AS meal_received_qty,
           COALESCE(SUM(delivered_meals),0)    AS delivered_meals
        FROM campaigns`
-    ).catch(() => ({ raised_amount: 0, supporters: 0, meal_received_qty: 0, delivered_meals: 0 }));
+    ).catch(() => ({
+      raised_amount: 0,
+      supporters: 0,
+      meal_received_qty: 0,
+      delivered_meals: 0,
+    }));
 
     /* ---------- DONATIONS ---------- */
-    const donTotal = await dbGet("SELECT COUNT(*) AS c FROM donations").catch(() => ({ c: 0 }));
-    const donSuccess = await dbGet("SELECT COUNT(*) AS c FROM donations WHERE status='success'").catch(() => ({ c: 0 }));
-    const donFailed = await dbGet("SELECT COUNT(*) AS c FROM donations WHERE status IN ('failed','cancelled','error')").catch(() => ({ c: 0 }));
-    const donAmtSuccess = await dbGet("SELECT COALESCE(SUM(amount),0) AS s FROM donations WHERE status='success'").catch(() => ({ s: 0 }));
+    const donTotal = await dbGet("SELECT COUNT(*) AS c FROM donations").catch(
+      () => ({ c: 0 })
+    );
+    const donSuccess = await dbGet(
+      "SELECT COUNT(*) AS c FROM donations WHERE status='success'"
+    ).catch(() => ({ c: 0 }));
+    const donFailed = await dbGet(
+      "SELECT COUNT(*) AS c FROM donations WHERE status IN ('failed','cancelled','error')"
+    ).catch(() => ({ c: 0 }));
+    const donAmtSuccess = await dbGet(
+      "SELECT COALESCE(SUM(amount),0) AS s FROM donations WHERE status='success'"
+    ).catch(() => ({ s: 0 }));
     const donLatest = await dbAll(
       `SELECT d.id, d.amount, d.status, d.created_at, d.paid_at,
               COALESCE(c.title, CONCAT('Campaign #', d.campaign_id)) AS campaign_title,
@@ -216,8 +265,12 @@ router.get("/stats", async (_req, res) => {
     const deliveries = await deliveriesAgg();
 
     /* ---------- BOOKINGS ---------- */
-    const bookTotal = await dbGet("SELECT COUNT(*) AS c FROM bookings").catch(() => ({ c: 0 }));
-    const bookByStatus = await dbAll("SELECT status, COUNT(*) AS count FROM bookings GROUP BY status").catch(() => []);
+    const bookTotal = await dbGet("SELECT COUNT(*) AS c FROM bookings").catch(
+      () => ({ c: 0 })
+    );
+    const bookByStatus = await dbAll(
+      "SELECT status, COUNT(*) AS count FROM bookings GROUP BY status"
+    ).catch(() => []);
 
     /* ---------- PAYMENTS breakdown ---------- */
     const paymentsByProvider = await dbAll(
@@ -227,11 +280,14 @@ router.get("/stats", async (_req, res) => {
     ).catch(() => []);
 
     /* ---------- PICKUP POINTS ---------- */
-    const pickupPointsTotal = await dbGet("SELECT COUNT(*) AS c FROM pickup_points").catch(() => ({ c: 0 }));
+    const pickupPointsTotal = await dbGet(
+      "SELECT COUNT(*) AS c FROM pickup_points"
+    ).catch(() => ({ c: 0 }));
 
     /* ---------- ANNOUNCEMENTS (đúng cột active) ---------- */
-    const announcementsActive = await dbGet("SELECT COUNT(*) AS c FROM announcements WHERE active=1")
-      .catch(() => ({ c: 0 }));
+    const announcementsActive = await dbGet(
+      "SELECT COUNT(*) AS c FROM announcements WHERE active=1"
+    ).catch(() => ({ c: 0 }));
     const announcementsLatest = await dbAll(
       "SELECT id, title, content, created_at FROM announcements WHERE active=1 ORDER BY created_at DESC LIMIT 6"
     ).catch(() => []);
@@ -252,7 +308,10 @@ router.get("/stats", async (_req, res) => {
     res.json({
       users: {
         total: num(usersTotal?.c),
-        byRole: safeArr(usersByRole).map(r => ({ role: r.role ?? "user", count: num(r.count ?? r.c) })),
+        byRole: safeArr(usersByRole).map((r) => ({
+          role: r.role ?? "user",
+          count: num(r.count ?? r.c),
+        })),
       },
       campaigns: {
         total: num(campTotal?.c),
@@ -272,12 +331,22 @@ router.get("/stats", async (_req, res) => {
       deliveries, // <— gói đủ success_rate + series/top lists
       bookings: {
         total: num(bookTotal?.c),
-        byStatus: safeArr(bookByStatus).map(r => ({ status: r.status ?? "unknown", count: num(r.count ?? r.c) })),
+        byStatus: safeArr(bookByStatus).map((r) => ({
+          status: r.status ?? "unknown",
+          count: num(r.count ?? r.c),
+        })),
       },
-      payments: safeArr(paymentsByProvider).map(p => ({ provider: p.provider ?? "unknown", count: num(p.count ?? p.c) })),
+      payments: safeArr(paymentsByProvider).map((p) => ({
+        provider: p.provider ?? "unknown",
+        count: num(p.count ?? p.c),
+      })),
       metrics_daily_today: metricsToday
         ? { ...metricsToday, at: NOW_SQL }
-        : { rescued_meals: deliveries.today.rescued_meals, deliveries: deliveries.today.total, at: NOW_SQL },
+        : {
+            rescued_meals: deliveries.today.rescued_meals,
+            deliveries: deliveries.today.total,
+            at: NOW_SQL,
+          },
       pickup_points: { total: num(pickupPointsTotal?.c) },
       announcements: {
         active: num(announcementsActive?.c),
@@ -288,7 +357,9 @@ router.get("/stats", async (_req, res) => {
     });
   } catch (e) {
     console.error("[/api/admin/stats] error:", e);
-    res.status(500).json({ error: "server_error", message: e?.message || "Server error" });
+    res
+      .status(500)
+      .json({ error: "server_error", message: e?.message || "Server error" });
   }
 });
 

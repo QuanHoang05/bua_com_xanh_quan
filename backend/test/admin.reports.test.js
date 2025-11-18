@@ -4,21 +4,6 @@ import request from "supertest";
 import express from "express";
 import jwt from "jsonwebtoken";
 
-// --- GIẢ LẬP (MOCK) CÁC MODULES ---
-// Giả lập DB và middleware để test logic của API một cách độc lập.
-jest.unstable_mockModule("../src/lib/db.js", () => ({
-  db: {
-    prepare: jest.fn(),
-  },
-}));
-jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
-  db: {
-    get: jest.fn(),
-    all: jest.fn(),
-    run: jest.fn(),
-    query: jest.fn(),
-  },
-}));
 jest.unstable_mockModule("../src/middlewares/roles.js", () => ({
     requireRole: () => (req, res, next) => next(),
 }));
@@ -28,124 +13,87 @@ const signTestToken = (payload) => {
   return jwt.sign(payload, "test_secret", { expiresIn: '1d' });
 };
 
-// Mô tả bộ test cho các route quản lý báo cáo (reports) của admin
-describe("Admin Reports Routes (/api/admin/reports)", () => {
+describe.each([
+  { driver: "sqlite", dbModulePath: "../src/lib/db.js" },
+  { driver: "mysql", dbModulePath: "../src/lib/db.mysql.js" },
+])("Admin Reports Routes with $driver DB", ({ driver, dbModulePath }) => {
   const adminUser = { id: 'admin-456', role: 'admin' };
   const adminToken = signTestToken(adminUser);
+  let app;
+  let db;
+  const mockDbFunctions = {
+    run: jest.fn(),
+    get: jest.fn(),
+    all: jest.fn(),
+    query: jest.fn(),
+  };
 
-  // ==================================
-  // BỘ TEST VỚI MÔI TRƯỜNG SQLITE
-  // ==================================
-  describe("with SQLite DB", () => {
-    let app;
-    let sqliteDb;
+  beforeAll(async () => {
+    process.env.DB_DRIVER = driver;
+    process.env.JWT_SECRET = "test_secret";
+    jest.resetModules();
+    jest.unstable_mockModule(dbModulePath, () => ({ db: {} }));
 
-    // Cài đặt môi trường test cho SQLite
-    beforeAll(async () => {
-      process.env.DB_DRIVER = "sqlite";
-      process.env.JWT_SECRET = "test_secret";
-      jest.resetModules();
+    const dbModule = await import(dbModulePath);
+    db = dbModule.db;
 
-      const dbModule = await import("../src/lib/db.js");
-      sqliteDb = dbModule.db;
-      sqliteDb.prepare.mockReturnValue({
-        run: jest.fn(),
-        get: jest.fn(),
-        all: jest.fn(),
-      });
+    if (driver === "sqlite") {
+      db.prepare = jest.fn(() => mockDbFunctions);
+    } else {
+      db.run = mockDbFunctions.run;
+      db.all = mockDbFunctions.all;
+      db.get = mockDbFunctions.get;
+      db.query = mockDbFunctions.query;
+    }
 
-      const { default: adminRouter } = await import("../src/routes/admin.js");
-      
-      app = express();
-      app.use(express.json());
-      app.use("/api/admin", adminRouter);
-    });
-
-    beforeEach(() => {
-      jest.clearAllMocks();
-    });
-
-    // Test case: Lấy danh sách các báo cáo thành công (có phân trang)
-    test("GET /reports should return a list of reports", async () => {
-      // Giả lập 2 lần gọi DB: 1 để lấy danh sách, 1 để lấy tổng số lượng
-      sqliteDb.prepare
-        .mockReturnValueOnce({ all: () => [{ id: 1, reason: 'spam' }] })
-        .mockReturnValueOnce({ get: () => ({ total: 1 }) });
-      
-      const res = await request(app).get("/api/admin/reports").set("Authorization", `Bearer ${adminToken}`);
-      
-      // Mong đợi status 200 và có 1 item trong danh sách
-      expect(res.statusCode).toBe(200);
-      expect(res.body.items).toHaveLength(1);
-    });
+    const { default: adminRouter } = await import("../src/routes/admin.js");
+    app = express();
+    app.use(express.json());
+    app.use("/api/admin", adminRouter);
   });
 
-  // =================================
-  // BỘ TEST VỚI MÔI TRƯỜNG MYSQL
-  // =================================
-  describe("with MySQL DB", () => {
-    let app;
-    let mysqlDb;
+  beforeEach(() => {
+    mockDbFunctions.run.mockClear();
+    mockDbFunctions.get.mockClear();
+    mockDbFunctions.all.mockClear();
+    mockDbFunctions.query.mockClear();
+  });
 
-    // Cài đặt môi trường test cho MySQL
-    beforeAll(async () => {
-      process.env.DB_DRIVER = "mysql";
-      process.env.JWT_SECRET = "test_secret";
-      jest.resetModules();
+  test("GET /reports should return a list of reports", async () => {
+    mockDbFunctions.all.mockResolvedValue([{ id: 1, reason: 'spam' }]);
+    mockDbFunctions.get.mockResolvedValue({ total: 1 });
 
-      const dbModule = await import("../src/lib/db.mysql.js");
-      mysqlDb = dbModule.db;
-      mysqlDb.all.mockResolvedValue([]);
-      mysqlDb.run.mockResolvedValue({});
-      mysqlDb.query.mockResolvedValue([[]]);
-      mysqlDb.get.mockResolvedValue(null);
+    const res = await request(app).get("/api/admin/reports").set("Authorization", `Bearer ${adminToken}`);
 
-      const { default: adminRouter } = await import("../src/routes/admin.js");
-      
-      app = express();
-      app.use(express.json());
-      app.use("/api/admin", adminRouter);
-    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.items).toHaveLength(1);
+  });
 
-    beforeEach(() => {
-      jest.clearAllMocks();
-    });
+  test("GET /reports/:id should return a single report", async () => {
+    const mockReport = { id: 1, reason: 'spam' };
+    mockDbFunctions.get.mockResolvedValue(mockReport);
 
-    // Test case: Lấy thông tin chi tiết của một báo cáo
-    test("GET /reports/:id should return a single report", async () => {
-      const mockReport = { id: 1, reason: 'spam' };
-      // Giả lập DB trả về một báo cáo cụ thể
-      mysqlDb.get.mockResolvedValue(mockReport);
-      
-      const res = await request(app).get("/api/admin/reports/1").set("Authorization", `Bearer ${adminToken}`);
-      
-      // Mong đợi status 200 và nhận được đúng báo cáo đó
-      expect(res.statusCode).toBe(200);
-      expect(res.body.id).toBe(1);
-    });
+    const res = await request(app).get("/api/admin/reports/1").set("Authorization", `Bearer ${adminToken}`);
 
-    // Test case: Cập nhật trạng thái của một báo cáo
-    test("PATCH /reports/:id should update a report", async () => {
-      // Giả lập hàm ghi DB
-      mysqlDb.run.mockResolvedValue({});
-      const res = await request(app).patch("/api/admin/reports/1").set("Authorization", `Bearer ${adminToken}`).send({ status: 'resolved' });
-      
-      // Mong đợi status 200, response ok và hàm ghi DB đã được gọi
-      expect(res.statusCode).toBe(200);
-      expect(res.body.ok).toBe(true);
-      expect(mysqlDb.run).toHaveBeenCalled();
-    });
+    expect(res.statusCode).toBe(200);
+    expect(res.body.id).toBe(1);
+  });
 
-    // Test case: Giải quyết một báo cáo (thường là cập nhật trạng thái và thêm ghi chú)
-    test("POST /reports/:id/resolve should resolve a report", async () => {
-        // Giả lập hàm ghi DB
-        mysqlDb.run.mockResolvedValue({});
-        const res = await request(app).post("/api/admin/reports/1/resolve").set("Authorization", `Bearer ${adminToken}`).send({ notes: 'Done'});
-        
-        // Mong đợi status 200, response ok và hàm ghi DB đã được gọi
-        expect(res.statusCode).toBe(200);
-        expect(res.body.ok).toBe(true);
-        expect(mysqlDb.run).toHaveBeenCalled();
-    });
+  test("PATCH /reports/:id should update a report", async () => {
+    mockDbFunctions.run.mockResolvedValue({});
+    const res = await request(app).patch("/api/admin/reports/1").set("Authorization", `Bearer ${adminToken}`).send({ status: 'resolved' });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(mockDbFunctions.run).toHaveBeenCalled();
+  });
+
+  test("POST /reports/:id/resolve should resolve a report", async () => {
+    mockDbFunctions.run.mockResolvedValue({});
+    const res = await request(app).post("/api/admin/reports/1/resolve").set("Authorization", `Bearer ${adminToken}`).send({ notes: 'Done'});
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.ok).toBe(true);
+    expect(mockDbFunctions.run).toHaveBeenCalled();
   });
 });

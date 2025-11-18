@@ -6,10 +6,15 @@ import { Router } from "express";
 import jwt from "jsonwebtoken";
 import "dotenv/config";
 
+// Code đúng
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) { ({ db } = await import("../lib/db.mysql.js")); }
-else          { ({ db } = await import("../lib/db.js")); }
+if (useMySQL) {
+  ({ db } = await import("../lib/db.mysql.js"));
+} else {
+  ({ db } = await import("../lib/db.js"));
+}
+
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
@@ -17,32 +22,62 @@ const JWT_SECRET = process.env.JWT_SECRET || "dev-secret";
 /* ---------------- small helpers ---------------- */
 async function dbGet(sql, params = []) {
   try {
-    if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+    if (useMySQL) {
+      const [rows] = await db.query(sql, params);
+      return rows?.[0] ?? null;
+    }
     return db.prepare(sql).get(...params);
   } catch (e) {
-    console.error("SQL ERROR dbGet:", e.message, "\nSQL:", sql, "\nPARAMS:", params);
+    console.error(
+      "SQL ERROR dbGet:",
+      e.message,
+      "\nSQL:",
+      sql,
+      "\nPARAMS:",
+      params
+    );
     throw e;
   }
 }
 async function dbAll(sql, params = []) {
   try {
-    if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+    if (useMySQL) {
+      const [rows] = await db.query(sql, params);
+      return rows ?? [];
+    }
     return db.prepare(sql).all(...params);
   } catch (e) {
-    console.error("SQL ERROR dbAll:", e.message, "\nSQL:", sql, "\nPARAMS:", params);
+    console.error(
+      "SQL ERROR dbAll:",
+      e.message,
+      "\nSQL:",
+      sql,
+      "\nPARAMS:",
+      params
+    );
     throw e;
   }
 }
 async function dbRun(sql, params = []) {
   try {
-    if (useMySQL) { const [r] = await db.query(sql, params); return r; }
+    if (useMySQL) {
+      const [r] = await db.query(sql, params);
+      return r;
+    }
     return db.prepare(sql).run(...params);
   } catch (e) {
-    console.error("SQL ERROR dbRun:", e.message, "\nSQL:", sql, "\nPARAMS:", params);
+    console.error(
+      "SQL ERROR dbRun:",
+      e.message,
+      "\nSQL:",
+      sql,
+      "\nPARAMS:",
+      params
+    );
     throw e;
   }
 }
-const nowSQL  = useMySQL ? "NOW()" : "datetime('now')";
+const nowSQL = useMySQL ? "NOW()" : "datetime('now')";
 const uuidSQL = useMySQL ? "UUID()" : null;
 const EMPTY_JSON_ARRAY_SQL = useMySQL ? "JSON_ARRAY()" : "json('[]')";
 
@@ -50,7 +85,11 @@ const parseMaybeJSON = (v) => {
   if (v == null) return null;
   if (Array.isArray(v) || typeof v === "object") return v;
   if (typeof v === "string") {
-    try { return JSON.parse(v); } catch { return null; }
+    try {
+      return JSON.parse(v);
+    } catch {
+      return null;
+    }
   }
   return null;
 };
@@ -95,7 +134,8 @@ async function requireUser(req, res, next) {
         id: def.id,
         label: def.label || def.line1,
         line1: def.line1,
-        lat: def.lat, lng: def.lng,
+        lat: def.lat,
+        lng: def.lng,
         source: "addresses",
       };
     } else if (addrObj && typeof addrObj === "object") {
@@ -139,31 +179,40 @@ router.get("/stats", requireUser, async (req, res) => {
       [uid]
     );
 
-    let totalMoney = 0, mealsFromMoney = 0, inKindMeals = 0, donationsCount = 0;
+    let totalMoney = 0,
+      mealsFromMoney = 0,
+      inKindMeals = 0,
+      donationsCount = 0;
     const campaignSet = new Set();
-    let firstAt = null, lastAt = null;
+    let firstAt = null,
+      lastAt = null;
 
     for (const d of donations) {
       donationsCount += 1;
       if (d.campaign_id != null) campaignSet.add(d.campaign_id);
 
       const amount = Number(d.amount || 0);
-      const qty    = Number(d.qty || 0);
-      totalMoney  += amount;
+      const qty = Number(d.qty || 0);
+      totalMoney += amount;
       inKindMeals += qty > 0 ? qty : 0;
 
       let price = Number(d.meal_price || 0);
       if (!price) {
         try {
-          const meta = typeof d.meta === "string" ? JSON.parse(d.meta || "{}") : (d.meta || {});
+          const meta =
+            typeof d.meta === "string"
+              ? JSON.parse(d.meta || "{}")
+              : d.meta || {};
           price = Number(meta?.meal?.price || 0) || 10000;
-        } catch { price = 10000; }
+        } catch {
+          price = 10000;
+        }
       }
       if (amount > 0 && price > 0) mealsFromMoney += Math.floor(amount / price);
 
       const ts = new Date(d.paid_at || d.created_at);
       if (!firstAt || ts < firstAt) firstAt = ts;
-      if (!lastAt  || ts > lastAt)  lastAt  = ts;
+      if (!lastAt || ts > lastAt) lastAt = ts;
     }
 
     const totalMeals = inKindMeals + mealsFromMoney;
@@ -192,21 +241,26 @@ router.get("/stats", requireUser, async (req, res) => {
       donations_count: donationsCount,
       campaigns_supported: campaignSet.size,
       first_donation_at: firstAt?.toISOString() || null,
-      last_donation_at:  lastAt?.toISOString() || null,
+      last_donation_at: lastAt?.toISOString() || null,
       active_bookings: Number(open?.active_bookings || 0),
 
       // alias FE
       total_amount: totalMoney,
       count: donationsCount,
-      default_pickup_point: addr ? {
-        id: addr.id,
-        name: addr.label || addr.line1,
-        address: addr.line1,
-        lat: addr.lat, lng: addr.lng,
-      } : null,
+      default_pickup_point: addr
+        ? {
+            id: addr.id,
+            name: addr.label || addr.line1,
+            address: addr.line1,
+            lat: addr.lat,
+            lng: addr.lng,
+          }
+        : null,
     });
   } catch (e) {
-    res.status(500).json({ error: "stats_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({ error: "stats_failed", message: e?.message || "Internal error" });
   }
 });
 
@@ -221,16 +275,16 @@ router.get("/food-items", requireUser, async (req, res) => {
       [uid]
     );
     res.json(
-      rows.map(r => {
+      rows.map((r) => {
         const images = parseMaybeJSON(r.images) || [];
-        const tags   = parseMaybeJSON(r.tags)   || [];
+        const tags = parseMaybeJSON(r.tags) || [];
         return {
           id: r.id,
           name: r.title,
           portions: Number(r.qty || 0),
           best_by: r.expire_at,
           pickup_address: r.location_addr,
-          photo_url: Array.isArray(images) ? (images[0] || null) : null,
+          photo_url: Array.isArray(images) ? images[0] || null : null,
           is_veg: Array.isArray(tags) ? tags.includes("veg") : false,
           status: r.status,
           created_at: r.created_at,
@@ -238,7 +292,12 @@ router.get("/food-items", requireUser, async (req, res) => {
       })
     );
   } catch (e) {
-    res.status(500).json({ error: "list_food_items_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "list_food_items_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -246,15 +305,20 @@ router.post("/food-items", requireUser, async (req, res) => {
   try {
     const uid = req.user.id;
     const {
-      name = "", portions = 0, photo_url = "", is_veg = false,
-      pickup_address = "", best_by = null, status = "available",
+      name = "",
+      portions = 0,
+      photo_url = "",
+      is_veg = false,
+      pickup_address = "",
+      best_by = null,
+      status = "available",
       description = null,
     } = req.body || {};
 
     const title = String(name || "").trim();
-    const qty   = Math.max(0, Number(portions || 0));
+    const qty = Math.max(0, Number(portions || 0));
     const imagesJson = JSON.stringify(photo_url ? [photo_url] : []);
-    const tagsJson   = JSON.stringify(is_veg ? ["veg"] : []);
+    const tagsJson = JSON.stringify(is_veg ? ["veg"] : []);
 
     let newId;
     if (useMySQL) {
@@ -262,7 +326,17 @@ router.post("/food-items", requireUser, async (req, res) => {
         `INSERT INTO food_items
          (id, owner_id, title, description, qty, unit, expire_at, location_addr, lat, lng, tags, images, status, visibility, created_at)
          VALUES (${uuidSQL}, ?, ?, ?, ?, 'suat', ?, ?, NULL, NULL, ?, ?, ?, 'public', ${nowSQL})`,
-        [uid, title, description, qty, best_by, pickup_address, tagsJson, imagesJson, status]
+        [
+          uid,
+          title,
+          description,
+          qty,
+          best_by,
+          pickup_address,
+          tagsJson,
+          imagesJson,
+          status,
+        ]
       );
       const r = await dbGet(
         `SELECT id FROM food_items WHERE owner_id=? ORDER BY created_at DESC LIMIT 1`,
@@ -276,13 +350,24 @@ router.post("/food-items", requireUser, async (req, res) => {
         `INSERT INTO food_items
          (id, owner_id, title, description, qty, unit, expire_at, location_addr, lat, lng, tags, images, status, visibility, created_at)
          VALUES (?, ?, ?, ?, ?, 'suat', ?, ?, NULL, NULL, json(?), json(?), ?, 'public', ${nowSQL})`,
-        [newId, uid, title, description, qty, best_by, pickup_address, tagsJson, imagesJson, status]
+        [
+          newId,
+          uid,
+          title,
+          description,
+          qty,
+          best_by,
+          pickup_address,
+          tagsJson,
+          imagesJson,
+          status,
+        ]
       );
     }
 
     const row = await dbGet(`SELECT * FROM food_items WHERE id=?`, [newId]);
     const images = parseMaybeJSON(row.images) || [];
-    const tags   = parseMaybeJSON(row.tags)   || [];
+    const tags = parseMaybeJSON(row.tags) || [];
 
     res.json({
       id: row.id,
@@ -290,13 +375,18 @@ router.post("/food-items", requireUser, async (req, res) => {
       portions: Number(row.qty || 0),
       best_by: row.expire_at,
       pickup_address: row.location_addr,
-      photo_url: Array.isArray(images) ? (images[0] || null) : null,
+      photo_url: Array.isArray(images) ? images[0] || null : null,
       is_veg: Array.isArray(tags) ? tags.includes("veg") : false,
       status: row.status,
       created_at: row.created_at,
     });
   } catch (e) {
-    res.status(500).json({ error: "create_food_item_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "create_food_item_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -312,7 +402,7 @@ router.patch("/food-items/:id", requireUser, async (req, res) => {
     if (!exists) return res.status(404).json({ error: "Not found" });
 
     const existsImages = parseMaybeJSON(exists.images) || [];
-    const existsTags   = parseMaybeJSON(exists.tags)   || [];
+    const existsTags = parseMaybeJSON(exists.tags) || [];
 
     const allowMap = {
       name: "title",
@@ -322,22 +412,25 @@ router.patch("/food-items/:id", requireUser, async (req, res) => {
       status: "status",
       description: "description",
     };
-    const sets = []; const args = [];
+    const sets = [];
+    const args = [];
 
     for (const [k, v] of Object.entries(req.body || {})) {
       if (k === "photo_url") {
         const imgs = Array.isArray(existsImages) ? existsImages.slice() : [];
         if (v && (!imgs.length || imgs[0] !== v)) imgs[0] = v;
-        sets.push("images=?"); args.push(JSON.stringify(imgs));
+        sets.push("images=?");
+        args.push(JSON.stringify(imgs));
       } else if (k === "is_veg") {
         const tags = Array.isArray(existsTags) ? existsTags.slice() : [];
         const idx = tags.indexOf("veg");
         if (v && idx < 0) tags.push("veg");
         if (!v && idx >= 0) tags.splice(idx, 1);
-        sets.push("tags=?"); args.push(JSON.stringify(tags));
+        sets.push("tags=?");
+        args.push(JSON.stringify(tags));
       } else if (allowMap[k]) {
         sets.push(`${allowMap[k]}=?`);
-        args.push(k === "portions" ? Number(v || 0) : (v ?? null));
+        args.push(k === "portions" ? Number(v || 0) : v ?? null);
       }
     }
 
@@ -351,7 +444,7 @@ router.patch("/food-items/:id", requireUser, async (req, res) => {
 
     const row = await dbGet("SELECT * FROM food_items WHERE id=?", [id]);
     const images = parseMaybeJSON(row.images) || [];
-    const tags   = parseMaybeJSON(row.tags)   || [];
+    const tags = parseMaybeJSON(row.tags) || [];
 
     res.json({
       id: row.id,
@@ -359,13 +452,18 @@ router.patch("/food-items/:id", requireUser, async (req, res) => {
       portions: Number(row.qty || 0),
       best_by: row.expire_at,
       pickup_address: row.location_addr,
-      photo_url: Array.isArray(images) ? (images[0] || null) : null,
+      photo_url: Array.isArray(images) ? images[0] || null : null,
       is_veg: Array.isArray(tags) ? tags.includes("veg") : false,
       status: row.status,
       created_at: row.created_at,
     });
   } catch (e) {
-    res.status(500).json({ error: "update_food_item_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "update_food_item_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -381,7 +479,12 @@ router.delete("/food-items/:id", requireUser, async (req, res) => {
     await dbRun("DELETE FROM food_items WHERE id=?", [id]);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: "delete_food_item_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "delete_food_item_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -432,7 +535,12 @@ router.post("/bundles", requireUser, async (req, res) => {
     const bundle = await dbGet("SELECT * FROM bundles WHERE id=?", [bundleId]);
     res.json(bundle);
   } catch (e) {
-    res.status(500).json({ error: "create_bundle_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "create_bundle_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -443,11 +551,11 @@ router.get("/donations", requireUser, async (req, res) => {
   try {
     const uid = req.user.id;
     const pageSize = Math.min(Number(req.query.pageSize || 20), 100) | 0;
-    const page     = Math.max(Number(req.query.page || 1), 1) | 0;
-    const offset   = (page - 1) * pageSize;
-    const status   = String(req.query.status || "all"); // 'all' | 'success' | 'failed' | 'pending'
+    const page = Math.max(Number(req.query.page || 1), 1) | 0;
+    const offset = (page - 1) * pageSize;
+    const status = String(req.query.status || "all"); // 'all' | 'success' | 'failed' | 'pending'
 
-    const limitSQL  = `LIMIT ${pageSize}`;
+    const limitSQL = `LIMIT ${pageSize}`;
     const offsetSQL = `OFFSET ${offset}`;
 
     let sql, params;
@@ -477,17 +585,28 @@ router.get("/donations", requireUser, async (req, res) => {
 
     const rows = await dbAll(sql, params);
 
-    res.json(rows.map(r => ({
-      id: r.id,
-      unit: r.type === "money" ? "money" : "meal",
-      amount: r.type === "money" ? Number(r.amount || 0) : Number(r.qty || 0),
-      status: r.status,
-      created_at: r.created_at,
-      paid_at: r.paid_at,
-      campaign: { id: r.campaign_id, title: r.campaign_title, cover: r.campaign_cover },
-    })));
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        unit: r.type === "money" ? "money" : "meal",
+        amount: r.type === "money" ? Number(r.amount || 0) : Number(r.qty || 0),
+        status: r.status,
+        created_at: r.created_at,
+        paid_at: r.paid_at,
+        campaign: {
+          id: r.campaign_id,
+          title: r.campaign_title,
+          cover: r.campaign_cover,
+        },
+      }))
+    );
   } catch (e) {
-    res.status(500).json({ error: "list_donations_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "list_donations_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -510,20 +629,27 @@ router.get("/recent-donations", requireUser, async (req, res) => {
       [uid]
     );
 
-    res.json(rows.map(r => ({
-      id: r.id,
-      type: r.type,
-      amount: Number(r.amount || 0),
-      qty: Number(r.qty || 0),
-      status: r.status,
-      created_at: r.created_at,
-      paid_at: r.paid_at,
-      campaign_id: r.campaign_id,
-      campaign_title: r.campaign_title,
-      campaign_cover: r.campaign_cover,
-    })));
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        type: r.type,
+        amount: Number(r.amount || 0),
+        qty: Number(r.qty || 0),
+        status: r.status,
+        created_at: r.created_at,
+        paid_at: r.paid_at,
+        campaign_id: r.campaign_id,
+        campaign_title: r.campaign_title,
+        campaign_cover: r.campaign_cover,
+      }))
+    );
   } catch (e) {
-    res.status(500).json({ error: "recent_donations_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "recent_donations_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -537,7 +663,12 @@ router.get("/pickup-points", requireUser, async (_req, res) => {
     );
     res.json({ items, default_id: null });
   } catch (e) {
-    res.status(500).json({ error: "pickup_points_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "pickup_points_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -551,7 +682,12 @@ router.get("/pickup-points/mine", requireUser, async (_req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    res.status(500).json({ error: "pickup_points_mine_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "pickup_points_mine_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -570,7 +706,12 @@ router.get("/support/tickets", requireUser, async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    res.status(500).json({ error: "support_list_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "support_list_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -590,7 +731,12 @@ router.post("/support/tickets", requireUser, async (req, res) => {
     );
     res.json(inserted);
   } catch (e) {
-    res.status(500).json({ error: "support_create_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "support_create_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -606,7 +752,12 @@ router.get("/support/tickets/:id/comments", requireUser, async (req, res) => {
     );
     res.json(rows);
   } catch (e) {
-    res.status(500).json({ error: "support_comments_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "support_comments_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -626,7 +777,12 @@ router.post("/support/tickets/:id/comments", requireUser, async (req, res) => {
     );
     res.json(c);
   } catch (e) {
-    res.status(500).json({ error: "support_comment_create_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "support_comment_create_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -649,7 +805,12 @@ router.patch("/default-pickup", requireUser, async (req, res) => {
     const def = await getDefaultAddress(uid);
     res.json({ ok: true, default_address: def });
   } catch (e) {
-    res.status(500).json({ error: "set_default_pickup_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "set_default_pickup_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 
@@ -657,7 +818,14 @@ router.patch("/default-pickup", requireUser, async (req, res) => {
 router.post("/request-pickup", requireUser, async (req, res) => {
   try {
     const uid = req.user.id;
-    let { title = "", qty = 1, pickup_address = "", lat = null, lng = null, note = "" } = req.body || {};
+    let {
+      title = "",
+      qty = 1,
+      pickup_address = "",
+      lat = null,
+      lng = null,
+      note = "",
+    } = req.body || {};
 
     title = String(title).trim();
     qty = Math.max(1, Number(qty || 1));
@@ -675,7 +843,8 @@ router.post("/request-pickup", requireUser, async (req, res) => {
     if (!title || !pickup_address) {
       return res.status(400).json({
         error: "missing_pickup_address",
-        message: "Thiếu tên món hoặc địa chỉ lấy. Bật GPS, đặt địa chỉ mặc định, hoặc nhập tay."
+        message:
+          "Thiếu tên món hoặc địa chỉ lấy. Bật GPS, đặt địa chỉ mặc định, hoặc nhập tay.",
       });
     }
 
@@ -696,7 +865,16 @@ router.post("/request-pickup", requireUser, async (req, res) => {
       `INSERT INTO bookings
        (id, item_id, receiver_id, qty, note, method, dropoff_addr_id, dropoff_address, dropoff_name, dropoff_phone, status, created_at)
        VALUES (?, ?, ?, ?, ?, 'delivery', NULL, ?, ?, ?, 'pending', ${nowSQL})`,
-      [bookingId, itemId, uid, qty, note, pickup_address, req.user.name || "", req.user.phone || ""]
+      [
+        bookingId,
+        itemId,
+        uid,
+        qty,
+        note,
+        pickup_address,
+        req.user.name || "",
+        req.user.phone || "",
+      ]
     );
 
     // 3) Delivery
@@ -705,14 +883,27 @@ router.post("/request-pickup", requireUser, async (req, res) => {
       `INSERT INTO deliveries
        (id, booking_id, campaign_id, qty, status, proof_images, created_at, pickup_name, pickup_address, dropoff_name, dropoff_address, dropoff_phone, note)
        VALUES (?, ?, NULL, ?, 'pending', ${EMPTY_JSON_ARRAY_SQL}, ${nowSQL}, ?, ?, ?, ?, ?, ?)`,
-      [deliveryId, bookingId, qty,
-       req.user.name || "", pickup_address,
-       req.user.name || "", pickup_address, req.user.phone || "", note]
+      [
+        deliveryId,
+        bookingId,
+        qty,
+        req.user.name || "",
+        pickup_address,
+        req.user.name || "",
+        pickup_address,
+        req.user.phone || "",
+        note,
+      ]
     );
 
     res.json({ ok: true, booking_id: bookingId, delivery_id: deliveryId });
   } catch (e) {
-    res.status(500).json({ error: "request_pickup_failed", message: e?.message || "Internal error" });
+    res
+      .status(500)
+      .json({
+        error: "request_pickup_failed",
+        message: e?.message || "Internal error",
+      });
   }
 });
 

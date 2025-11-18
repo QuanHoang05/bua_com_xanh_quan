@@ -2,10 +2,14 @@ import { Router } from "express";
 import crypto from "crypto";
 import "dotenv/config";
 
-const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
+// Code đúng
+const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else ({ db } = await import("../lib/db.js"));
+if (useMySQL) {
+  ({ db } = await import("../lib/db.mysql.js"));
+} else {
+  ({ db } = await import("../lib/db.js"));
+}
 
 const router = Router();
 
@@ -19,7 +23,7 @@ function hmacOk(req) {
   return crypto.timingSafeEqual(Buffer.from(h), Buffer.from(sig));
 }
 
-async function dbGet(sql, params=[]) {
+async function dbGet(sql, params = []) {
   if (useMySQL) {
     if (db.get) return await db.get(sql, params);
     const [rows] = await db.query(sql, params);
@@ -27,7 +31,7 @@ async function dbGet(sql, params=[]) {
   }
   return db.prepare(sql).get(...params);
 }
-async function dbAll(sql, params=[]) {
+async function dbAll(sql, params = []) {
   if (useMySQL) {
     if (db.all) return await db.all(sql, params);
     const [rows] = await db.query(sql, params);
@@ -38,22 +42,23 @@ async function dbAll(sql, params=[]) {
 
 router.post("/bank/vietqr", async (req, res) => {
   try {
-    if (!hmacOk(req)) return res.status(401).json({ ok:false, error:"bad_signature" });
+    if (!hmacOk(req))
+      return res.status(401).json({ ok: false, error: "bad_signature" });
 
     // ví dụ payload chuẩn hoá (tuỳ provider đổi mapping)
     const {
-      bank_txn_id,          // duy nhất
-      amount,               // số tiền VND
-      memo,                 // "BXA#11111111|..."
-      paid_at,              // ISO hoặc epoch
-      from_bank,            // VCB/TCB...
-      from_name,            // tên người gửi
-      from_account,         // số TKG gửi (nếu có)
+      bank_txn_id, // duy nhất
+      amount, // số tiền VND
+      memo, // "BXA#11111111|..."
+      paid_at, // ISO hoặc epoch
+      from_bank, // VCB/TCB...
+      from_name, // tên người gửi
+      from_account, // số TKG gửi (nếu có)
       currency = "VND",
     } = req.body || {};
 
     if (!bank_txn_id || !amount) {
-      return res.status(422).json({ ok:false, error:"invalid_payload" });
+      return res.status(422).json({ ok: false, error: "invalid_payload" });
     }
 
     // match campaign_id theo memo: BXA#12345
@@ -65,9 +70,18 @@ router.post("/bank/vietqr", async (req, res) => {
         `INSERT IGNORE INTO donations (campaign_id, type, amount, currency, donor_name,
           bank_txn_id, bank_code, bank_account, memo, status, paid_at)
          VALUES (0,'money',?,?,?, ?,?,?,?,'pending', ?)`,
-        [Number(amount)||0, currency, from_name||"", bank_txn_id, from_bank||"", from_account||"", memo||"", paid_at||null]
+        [
+          Number(amount) || 0,
+          currency,
+          from_name || "",
+          bank_txn_id,
+          from_bank || "",
+          from_account || "",
+          memo || "",
+          paid_at || null,
+        ]
       );
-      return res.json({ ok:true, pending:true });
+      return res.json({ ok: true, pending: true });
     }
 
     // chèn donation (idempotent nhờ UNIQUE bank_txn_id)
@@ -75,8 +89,18 @@ router.post("/bank/vietqr", async (req, res) => {
       `INSERT IGNORE INTO donations (campaign_id, type, amount, currency, donor_name,
         bank_txn_id, bank_code, bank_account, memo, status, paid_at)
        VALUES (?,?,?,?,?, ?,?,?,?, 'success', ?)`,
-      [campaignId, 'money', Number(amount)||0, currency, from_name||"",
-       bank_txn_id, from_bank||"", from_account||"", memo||"", paid_at||null]
+      [
+        campaignId,
+        "money",
+        Number(amount) || 0,
+        currency,
+        from_name || "",
+        bank_txn_id,
+        from_bank || "",
+        from_account || "",
+        memo || "",
+        paid_at || null,
+      ]
     );
 
     // cộng dồn raised trong campaigns
@@ -84,13 +108,13 @@ router.post("/bank/vietqr", async (req, res) => {
       useMySQL
         ? "UPDATE campaigns SET raised = COALESCE(raised,0) + ? WHERE id=?"
         : "UPDATE campaigns SET raised = COALESCE(raised,0) + ? WHERE id=?",
-      [Number(amount)||0, campaignId]
+      [Number(amount) || 0, campaignId]
     );
 
-    return res.json({ ok:true });
+    return res.json({ ok: true });
   } catch (e) {
     console.error("[webhook vietqr] error:", e);
-    return res.status(500).json({ ok:false, error:"server_error" });
+    return res.status(500).json({ ok: false, error: "server_error" });
   }
 });
 

@@ -5,8 +5,8 @@ import { requireAuth, requireRole } from "../middlewares/auth.js";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
+else ({ db } = await import("../lib/db.js"));
 
 /* --- small helpers --- */
 async function dbGet(sql, params = []) {
@@ -61,7 +61,8 @@ const parseJson = (raw, fb = {}) => {
     return fb;
   }
 };
-const toJSONValue = (obj) => (useMySQL ? JSON.stringify(obj) : JSON.stringify(obj));
+const toJSONValue = (obj) =>
+  useMySQL ? JSON.stringify(obj) : JSON.stringify(obj);
 
 /* --- default payload shape --- */
 const DEFAULT_SETTINGS = {
@@ -131,74 +132,120 @@ async function readAllSettings() {
   };
 }
 async function upsertSetting(key, valueObj) {
-  const row = await dbGet("SELECT id FROM site_settings WHERE key_name = ?", [key]);
+  const row = await dbGet("SELECT id FROM site_settings WHERE key_name = ?", [
+    key,
+  ]);
   const payload = toJSONValue(valueObj);
   if (row?.id) {
-    await dbRun("UPDATE site_settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [payload, row.id]);
+    await dbRun(
+      "UPDATE site_settings SET value_json = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+      [payload, row.id]
+    );
   } else {
-    await dbRun("INSERT INTO site_settings (key_name, value_json) VALUES (?, ?)", [key, payload]);
+    await dbRun(
+      "INSERT INTO site_settings (key_name, value_json) VALUES (?, ?)",
+      [key, payload]
+    );
   }
 }
 
 const router = Router();
 
 /* --- GET settings --- */
-router.get("/admin/settings", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const settings = await readAllSettings();
-    res.json(settings);
-  } catch (e) {
-    res.status(500).json({ ok: false, message: e?.message || "Server error" });
+router.get(
+  "/admin/settings",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const settings = await readAllSettings();
+      res.json(settings);
+    } catch (e) {
+      res
+        .status(500)
+        .json({ ok: false, message: e?.message || "Server error" });
+    }
   }
-});
+);
 
 /* --- POST settings (full document upsert) --- */
-router.post("/admin/settings", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const incoming = req.body || {};
-    // Validate basics (ví dụ)
-    if (incoming?.general?.site_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(incoming.general.site_email)) {
-      return res.status(400).json({ ok: false, message: "Email website không hợp lệ" });
+router.post(
+  "/admin/settings",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const incoming = req.body || {};
+      // Validate basics (ví dụ)
+      if (
+        incoming?.general?.site_email &&
+        !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(incoming.general.site_email)
+      ) {
+        return res
+          .status(400)
+          .json({ ok: false, message: "Email website không hợp lệ" });
+      }
+      // upsert từng block để dễ mở rộng
+      const keys = [
+        "general",
+        "branding",
+        "email",
+        "payments",
+        "seo",
+        "advanced",
+      ];
+      for (const k of keys) {
+        if (incoming[k]) await upsertSetting(k, incoming[k]);
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      res
+        .status(500)
+        .json({ ok: false, message: e?.message || "Server error" });
     }
-    // upsert từng block để dễ mở rộng
-    const keys = ["general", "branding", "email", "payments", "seo", "advanced"];
-    for (const k of keys) {
-      if (incoming[k]) await upsertSetting(k, incoming[k]);
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, message: e?.message || "Server error" });
   }
-});
+);
 
 /* --- POST test email (tùy chọn) --- */
-router.post("/admin/settings/test-email", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const s = await readAllSettings();
-    const { to } = req.body || {};
-    // nếu dự án đã có nodemailer:
-    let sent = false;
+router.post(
+  "/admin/settings/test-email",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
     try {
-      const nodemailer = (await import("nodemailer")).default;
-      const transporter = nodemailer.createTransport({
-        host: s.email.smtp_host,
-        port: s.email.smtp_port,
-        secure: !!s.email.smtp_secure,
-        auth: s.email.smtp_user ? { user: s.email.smtp_user, pass: s.email.smtp_pass } : undefined,
-      });
-      const info = await transporter.sendMail({
-        from: `${s.email.from_name} <${s.email.from_email}>`,
-        to: to || s.email.test_recipient,
-        subject: "Test email • Bữa Cơm Xanh",
-        text: "Xin chào, đây là email kiểm tra cấu hình SMTP.",
-      });
-      sent = !!info?.messageId;
-    } catch {}
-    if (!sent) return res.status(400).json({ ok: false, message: "Gửi email thử thất bại" });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ ok: false, message: e?.message || "Server error" });
+      const s = await readAllSettings();
+      const { to } = req.body || {};
+      // nếu dự án đã có nodemailer:
+      let sent = false;
+      try {
+        const nodemailer = (await import("nodemailer")).default;
+        const transporter = nodemailer.createTransport({
+          host: s.email.smtp_host,
+          port: s.email.smtp_port,
+          secure: !!s.email.smtp_secure,
+          auth: s.email.smtp_user
+            ? { user: s.email.smtp_user, pass: s.email.smtp_pass }
+            : undefined,
+        });
+        const info = await transporter.sendMail({
+          from: `${s.email.from_name} <${s.email.from_email}>`,
+          to: to || s.email.test_recipient,
+          subject: "Test email • Bữa Cơm Xanh",
+          text: "Xin chào, đây là email kiểm tra cấu hình SMTP.",
+        });
+        sent = !!info?.messageId;
+      } catch {}
+      if (!sent)
+        return res
+          .status(400)
+          .json({ ok: false, message: "Gửi email thử thất bại" });
+      res.json({ ok: true });
+    } catch (e) {
+      res
+        .status(500)
+        .json({ ok: false, message: e?.message || "Server error" });
+    }
   }
-});
+);
 
 export default router;

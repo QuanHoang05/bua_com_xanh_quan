@@ -6,13 +6,15 @@ import { requireAuth } from "./auth.js"; // để lấy user từ JWT
 const router = express.Router();
 
 /* ==================== DB adapter ==================== */
-const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
+// Code đúng
+const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
 if (useMySQL) {
   ({ db } = await import("../lib/db.mysql.js"));
 } else {
   ({ db } = await import("../lib/db.js"));
 }
+
 
 async function dbGet(sql, params = []) {
   if (useMySQL) {
@@ -174,7 +176,11 @@ router.post("/create", requireAuth, async (req, res, next) => {
     // Mock mode
     const isLocal = /localhost|127\.0\.0\.1/.test(MOMO_REDIRECT_URL);
     if (PAYMENTS_FORCE_MOCK === "1" || isLocal) {
-      return res.json({ ok: true, payUrl: `/mock-momo/${orderId}`, mock: true });
+      return res.json({
+        ok: true,
+        payUrl: `/mock-momo/${orderId}`,
+        mock: true,
+      });
     }
 
     const resp = await fetch(CREATE_URL, {

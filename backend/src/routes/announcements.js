@@ -5,7 +5,7 @@ import "dotenv/config";
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
 if (useMySQL) {
-  ({ db } = await import("../lib/db.mysql.js"));
+  ({ db } = await import("../lib/db.js"));
 } else {
   ({ db } = await import("../lib/db.js"));
 }
@@ -55,9 +55,13 @@ function normalize(row) {
 router.get("/", async (req, res) => {
   try {
     const activeRaw = (req.query.active ?? "1").toString().toLowerCase();
-    const filterActive = activeRaw === "1" || activeRaw === "true" || activeRaw === "yes";
+    const filterActive =
+      activeRaw === "1" || activeRaw === "true" || activeRaw === "yes";
     const limit = toInt(req.query.limit, 20, 1, 100);
-    const order = String(req.query.order || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const order =
+      String(req.query.order || "desc").toLowerCase() === "asc"
+        ? "ASC"
+        : "DESC";
     const where = filterActive ? "WHERE COALESCE(active,1)=1" : "";
 
     let rows = [];
@@ -109,7 +113,9 @@ router.get("/:id", async (req, res) => {
     res.json({ ok: true, item: normalize(row) });
   } catch (e) {
     console.error("[GET /api/announcements/:id] error:", e?.message || e);
-    res.status(500).json({ ok: false, message: "Không lấy được chi tiết thông báo" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không lấy được chi tiết thông báo" });
   }
 });
 

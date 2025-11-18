@@ -15,9 +15,9 @@ let dbInitialized = false;
 async function initializeDb() {
   if (dbInitialized) return;
   try {
-    if (useMySQL) {
+    if (useMySQL) { // Khi dùng MySQL, import trực tiếp db.mysql.js
       ({ db } = await import("../lib/db.mysql.js"));
-    } else {
+    } else { // Khi dùng SQLite, import db.js (hoặc db.sqlite.js)
       ({ db } = await import("../lib/db.js"));
     }
     dbInitialized = true;

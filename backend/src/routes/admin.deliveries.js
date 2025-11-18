@@ -8,22 +8,31 @@ import { requireAuth } from "../middlewares/auth.js";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
+else ({ db } = await import("../lib/db.js"));
 
 const r = Router();
 
 /* ---------------- DB helpers ---------------- */
 async function dbGet(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbAll(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 async function dbRun(sql, params = []) {
-  if (useMySQL) { const [r] = await db.query(sql, params); return r; }
+  if (useMySQL) {
+    const [r] = await db.query(sql, params);
+    return r;
+  }
   return db.prepare(sql).run(...params);
 }
 const NOW = () => (useMySQL ? "NOW()" : "CURRENT_TIMESTAMP");
@@ -87,11 +96,17 @@ const DELIVERY_SELECT = `
 ====================================================================== */
 r.get("/", async (req, res) => {
   try {
-    const statusQ   = String(req.query.status || "assigned").toLowerCase();
-    const q         = String(req.query.q || "").trim();
+    const statusQ = String(req.query.status || "assigned").toLowerCase();
+    const q = String(req.query.q || "").trim();
     const shipperId = String(req.query.shipper_id || "").trim();
-    const page      = Math.max(1, parseInt(req.query.page || 1, 10));
-    const pageSize  = Math.max(1, Math.min(200, parseInt(req.query.pageSize || req.query.page_size || 20, 10)));
+    const page = Math.max(1, parseInt(req.query.page || 1, 10));
+    const pageSize = Math.max(
+      1,
+      Math.min(
+        200,
+        parseInt(req.query.pageSize || req.query.page_size || 20, 10)
+      )
+    );
 
     const conds = ["1=1"];
     const p = [];
@@ -103,14 +118,20 @@ r.get("/", async (req, res) => {
       // giữ tương thích cũ: mặc định xem các đơn đang vận hành
       conds.push(`d.status IN ('pending','assigned','picking')`);
     } else if (statusQ && statusQ !== "all") {
-      const arr = statusQ.split(",").map(s => s.trim()).filter(Boolean);
+      const arr = statusQ
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       if (arr.length) {
         conds.push(`d.status IN (${arr.map(() => "?").join(",")})`);
         p.push(...arr);
       }
     }
 
-    if (shipperId) { conds.push(`d.shipper_id = ?`); p.push(shipperId); }
+    if (shipperId) {
+      conds.push(`d.shipper_id = ?`);
+      p.push(shipperId);
+    }
 
     if (q) {
       // tránh lỗi collation: chỉ so sánh trong cùng cột, không join bằng chuỗi literal khác collation
@@ -126,7 +147,10 @@ r.get("/", async (req, res) => {
 
     const whereSQL = `WHERE ${conds.join(" AND ")}`;
 
-    const totalRow = await dbGet(`SELECT COUNT(1) AS c FROM deliveries d ${whereSQL}`, p);
+    const totalRow = await dbGet(
+      `SELECT COUNT(1) AS c FROM deliveries d ${whereSQL}`,
+      p
+    );
     const total = Number(totalRow?.c || 0);
     const offset = (page - 1) * pageSize;
 
@@ -196,11 +220,18 @@ r.patch("/:id", async (req, res) => {
          updated_at   = ${NOW()}
        WHERE id=?`,
       [
-        status, shipper_id,
-        pickup_eta, dropoff_eta,
-        pickup_at, delivered_at,
+        status,
+        shipper_id,
+        pickup_eta,
+        dropoff_eta,
+        pickup_at,
+        delivered_at,
         fail_reason,
-        meta_json ? (typeof meta_json === "string" ? meta_json : JSON.stringify(meta_json)) : null,
+        meta_json
+          ? typeof meta_json === "string"
+            ? meta_json
+            : JSON.stringify(meta_json)
+          : null,
         id,
       ]
     );
@@ -212,7 +243,10 @@ r.patch("/:id", async (req, res) => {
       else if (status === "delivered") to = "completed";
       else if (status === "cancelled") to = "cancelled";
       if (to && dv.booking_id) {
-        await dbRun(`UPDATE bookings SET status=?, updated_at=${NOW()} WHERE id=?`, [to, dv.booking_id]);
+        await dbRun(
+          `UPDATE bookings SET status=?, updated_at=${NOW()} WHERE id=?`,
+          [to, dv.booking_id]
+        );
       }
     }
 
@@ -233,9 +267,15 @@ r.post("/:id/cancel", async (req, res) => {
     const dv = await dbGet(`SELECT * FROM deliveries WHERE id=?`, [id]);
     if (!dv) return res.status(404).json({ error: "Delivery not found" });
 
-    await dbRun(`UPDATE deliveries SET status='cancelled', updated_at=${NOW()} WHERE id=?`, [id]);
+    await dbRun(
+      `UPDATE deliveries SET status='cancelled', updated_at=${NOW()} WHERE id=?`,
+      [id]
+    );
     if (dv.booking_id) {
-      await dbRun(`UPDATE bookings   SET status='cancelled', updated_at=${NOW()} WHERE id=?`, [dv.booking_id]);
+      await dbRun(
+        `UPDATE bookings   SET status='cancelled', updated_at=${NOW()} WHERE id=?`,
+        [dv.booking_id]
+      );
     }
 
     const fresh = await dbGet(`${DELIVERY_SELECT} WHERE d.id=?`, [id]);
@@ -256,7 +296,10 @@ r.post("/:id/generate-otp", async (req, res) => {
     if (!dv) return res.status(404).json({ error: "Delivery not found" });
 
     const otp = String(Math.floor(100000 + Math.random() * 900000));
-    await dbRun(`UPDATE deliveries SET otp_code=?, updated_at=${NOW()} WHERE id=?`, [otp, id]);
+    await dbRun(
+      `UPDATE deliveries SET otp_code=?, updated_at=${NOW()} WHERE id=?`,
+      [otp, id]
+    );
     res.json({ otp });
   } catch (e) {
     console.error("[admin.deliveries] gen-otp error:", e);

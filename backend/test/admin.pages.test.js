@@ -5,20 +5,6 @@ import express from "express";
 import jwt from "jsonwebtoken";
 
 // --- GIẢ LẬP (MOCK) CÁC MODULES ---
-// Giả lập DB và middleware để test logic của API một cách độc lập.
-jest.unstable_mockModule("../src/lib/db.js", () => ({
-  db: {
-    prepare: jest.fn(),
-  },
-}));
-jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
-  db: {
-    get: jest.fn(),
-    all: jest.fn(),
-    run: jest.fn(),
-    query: jest.fn(),
-  },
-}));
 jest.unstable_mockModule("../src/middlewares/roles.js", () => ({
     requireRole: () => (req, res, next) => next(),
 }));
@@ -45,6 +31,11 @@ describe("Admin CMS Pages Routes (/api/admin/pages)", () => {
       process.env.DB_DRIVER = "sqlite";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.js", () => ({
+        db: {
+          prepare: jest.fn(),
+        },
+      }));
 
       const dbModule = await import("../src/lib/db.js");
       sqliteDb = dbModule.db;
@@ -91,6 +82,15 @@ describe("Admin CMS Pages Routes (/api/admin/pages)", () => {
       process.env.DB_DRIVER = "mysql";
       process.env.JWT_SECRET = "test_secret";
       jest.resetModules();
+      jest.unstable_mockModule("../src/lib/db.mysql.js", () => ({
+        db: {
+          get: jest.fn(),
+          all: jest.fn(),
+          run: jest.fn(),
+          query: jest.fn(),
+        },
+      }));
+
 
       const dbModule = await import("../src/lib/db.mysql.js");
       mysqlDb = dbModule.db;

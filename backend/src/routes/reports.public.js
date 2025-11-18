@@ -12,9 +12,11 @@ import express from "express";
 const isMySQL = (process.env.DB_DRIVER || "mysql").toLowerCase() === "mysql";
 if (!isMySQL) {
   // API này nhắm tới MySQL/MariaDB theo dump; nếu cần SQLite thì phải viết lại JSON_EXTRACT tương ứng.
-  console.warn("[reports.public] DB_DRIVER != mysql – JSON_EXTRACT có thể không hoạt động trên SQLite.");
+  console.warn(
+    "[reports.public] DB_DRIVER != mysql – JSON_EXTRACT có thể không hoạt động trên SQLite."
+  );
 }
-const { db } = await import("../lib/db.mysql.js");
+const { db } = await import("../lib/db.js");
 
 const router = express.Router();
 
@@ -31,7 +33,7 @@ const STATUS_OK = "LOWER(d.status) IN ('success','paid','completed','done')";
 
 // Cột tiền/bữa (có fallback)
 const AMOUNT_SQL = "COALESCE(d.amount, d.value, 0)";
-const MEALS_SQL  = "COALESCE(d.qty, d.quantity, 0)";
+const MEALS_SQL = "COALESCE(d.qty, d.quantity, 0)";
 
 // ORDER BY an toàn
 function getOrderBy(sort) {
@@ -70,11 +72,18 @@ const SQL_MEAL_TARGET_PREF = `
  * ============================================================ */
 router.get("/campaigns", async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
-  const pageSize = pageSizeBounds(parseInt(req.query.pageSize || "18", 10), 1, 200);
+  const pageSize = pageSizeBounds(
+    parseInt(req.query.pageSize || "18", 10),
+    1,
+    200
+  );
   const q = (req.query.q || "").trim();
   const status = (req.query.status || "all").toLowerCase();
   const sort = (req.query.sort || "progress").toLowerCase();
-  const year = req.query.year && req.query.year !== "all" ? parseInt(req.query.year, 10) : null;
+  const year =
+    req.query.year && req.query.year !== "all"
+      ? parseInt(req.query.year, 10)
+      : null;
 
   const where = [];
   const params = [];
@@ -99,7 +108,10 @@ router.get("/campaigns", async (req, res) => {
 
   try {
     // total
-    const [cnt] = await db.query(`SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`, params);
+    const [cnt] = await db.query(
+      `SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`,
+      params
+    );
     const total = toNum(cnt?.[0]?.total);
 
     // rows
@@ -127,12 +139,14 @@ router.get("/campaigns", async (req, res) => {
     `;
     const [rows] = await db.query(sql, [...params, pageSize, offset]);
 
-    const items = rows.map(r => {
+    const items = rows.map((r) => {
       const goal = toNum(r.goal);
       const mealPriceCol = toNum(r.meal_price);
       const moneyRaised = toNum(r.raised_amount);
       const mealsRaised = toNum(r.meal_received_qty);
-      const mealGoalCalc = toNum(r.meal_goal_calc) || (mealPriceCol > 0 ? Math.floor(goal / mealPriceCol) : 0);
+      const mealGoalCalc =
+        toNum(r.meal_goal_calc) ||
+        (mealPriceCol > 0 ? Math.floor(goal / mealPriceCol) : 0);
 
       return {
         id: r.id,
@@ -175,7 +189,10 @@ router.get("/campaigns/:id", async (req, res) => {
 
   try {
     // campaign
-    const [cRows] = await db.query(`SELECT * FROM campaigns WHERE id = ? LIMIT 1`, [id]);
+    const [cRows] = await db.query(
+      `SELECT * FROM campaigns WHERE id = ? LIMIT 1`,
+      [id]
+    );
     const c = cRows?.[0];
     if (!c) return res.status(404).json({ ok: false, message: "Not found" });
 
@@ -193,7 +210,9 @@ router.get("/campaigns/:id", async (req, res) => {
     );
     const mealPrice = toNum(pref?.[0]?.meal_price_pref) || toNum(c.meal_price);
     const goal = toNum(c.goal);
-    const mealGoal = toNum(pref?.[0]?.meal_target_pref) || (mealPrice > 0 ? Math.floor(goal / mealPrice) : 0);
+    const mealGoal =
+      toNum(pref?.[0]?.meal_target_pref) ||
+      (mealPrice > 0 ? Math.floor(goal / mealPrice) : 0);
 
     // series theo tháng từ donations (trạng thái OK)
     const [series] = await db.query(
@@ -264,21 +283,30 @@ router.get("/campaigns/:id", async (req, res) => {
 
     // gộp series theo tháng (donations + deliveries)
     const seriesMap = new Map();
-    (series || []).forEach(r => {
+    (series || []).forEach((r) => {
       seriesMap.set(r.ym, {
         month: r.ym,
         value: toNum(r.value),
         meals: toNum(r.meals),
         donations: toNum(r.donations),
-        meals_out: 0
+        meals_out: 0,
       });
     });
-    (seriesOut || []).forEach(r => {
+    (seriesOut || []).forEach((r) => {
       const exist = seriesMap.get(r.ym);
       if (exist) exist.meals_out = toNum(r.meals_out);
-      else seriesMap.set(r.ym, { month: r.ym, value: 0, meals: 0, donations: 0, meals_out: toNum(r.meals_out) });
+      else
+        seriesMap.set(r.ym, {
+          month: r.ym,
+          value: 0,
+          meals: 0,
+          donations: 0,
+          meals_out: toNum(r.meals_out),
+        });
     });
-    const seriesMerged = Array.from(seriesMap.values()).sort((a,b)=>a.month.localeCompare(b.month));
+    const seriesMerged = Array.from(seriesMap.values()).sort((a, b) =>
+      a.month.localeCompare(b.month)
+    );
 
     res.json({
       item: {
@@ -303,14 +331,14 @@ router.get("/campaigns/:id", async (req, res) => {
         created_at: c.created_at,
       },
       series: seriesMerged, // có thêm field meals_out
-      latest: (latest || []).map(d => ({
+      latest: (latest || []).map((d) => ({
         id: d.id,
         at: d.at,
         amount: toNum(d.amount),
         meals: toNum(d.meals),
         donor: d.donor,
       })),
-      latest_out: (latestOut || []).map(v => ({
+      latest_out: (latestOut || []).map((v) => ({
         id: v.id,
         at: v.at,
         amount: 0,
@@ -336,7 +364,11 @@ router.get("/campaigns/:id", async (req, res) => {
  * ============================================================ */
 router.get("/transactions", async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
-  const pageSize = pageSizeBounds(parseInt(req.query.pageSize || "50", 10), 1, 200);
+  const pageSize = pageSizeBounds(
+    parseInt(req.query.pageSize || "50", 10),
+    1,
+    200
+  );
   const campaignId = req.query.campaignId || null;
   const kind = String(req.query.kind || "all").toLowerCase();
   const q = (req.query.q || "").trim();
@@ -353,10 +385,12 @@ router.get("/transactions", async (req, res) => {
       paramsDon.push(campaignId);
     }
     if (kind === "money") whereDon.push(`${AMOUNT_SQL} > 0`);
-    if (kind === "meal")  whereDon.push(`${MEALS_SQL}  > 0`);
+    if (kind === "meal") whereDon.push(`${MEALS_SQL}  > 0`);
     if (q) {
       const kw = `%${q}%`;
-      whereDon.push("(COALESCE(u.name, d.donor_name) LIKE ? OR COALESCE(d.donor_note, d.memo, d.message, '') LIKE ?)");
+      whereDon.push(
+        "(COALESCE(u.name, d.donor_name) LIKE ? OR COALESCE(d.donor_note, d.memo, d.message, '') LIKE ?)"
+      );
       paramsDon.push(kw, kw);
     }
     const whereSQLDon = `WHERE ${whereDon.join(" AND ")}`;
@@ -371,7 +405,9 @@ router.get("/transactions", async (req, res) => {
     if (q) {
       const kw = `%${q}%`;
       // tìm theo tên người nhận (users.name/dropoff_name) hoặc note
-      whereDel.push("(COALESCE(ru.name, v.dropoff_name, '') LIKE ? OR COALESCE(b.note, v.note, v.dropoff_address, '') LIKE ?)");
+      whereDel.push(
+        "(COALESCE(ru.name, v.dropoff_name, '') LIKE ? OR COALESCE(b.note, v.note, v.dropoff_address, '') LIKE ?)"
+      );
       paramsDel.push(kw, kw);
     }
     const whereSQLDel = `WHERE ${whereDel.join(" AND ")}`;
@@ -410,11 +446,17 @@ router.get("/transactions", async (req, res) => {
       );
 
       return res.json({
-        page, pageSize, total,
-        items: rows.map(r => ({
-          id: r.id, at: r.at, party: r.party, content: r.content,
-          amount: 0, meals: toNum(r.meals)
-        }))
+        page,
+        pageSize,
+        total,
+        items: rows.map((r) => ({
+          id: r.id,
+          at: r.at,
+          party: r.party,
+          content: r.content,
+          amount: 0,
+          meals: toNum(r.meals),
+        })),
       });
     }
 
@@ -458,16 +500,26 @@ router.get("/transactions", async (req, res) => {
       );
 
       const merged = [
-        ...(rowsDon || []).map(r => ({ ...r, amount: toNum(r.amount), meals: toNum(r.meals) })),
-        ...(rowsDel || []).map(r => ({ ...r, amount: 0, meals: toNum(r.meals) })),
+        ...(rowsDon || []).map((r) => ({
+          ...r,
+          amount: toNum(r.amount),
+          meals: toNum(r.meals),
+        })),
+        ...(rowsDel || []).map((r) => ({
+          ...r,
+          amount: 0,
+          meals: toNum(r.meals),
+        })),
       ].sort((a, b) => new Date(b.at) - new Date(a.at));
 
       const total = merged.length;
       const items = merged.slice(offset, offset + pageSize);
 
       return res.json({
-        page, pageSize, total,
-        items
+        page,
+        pageSize,
+        total,
+        items,
       });
     }
 
@@ -505,7 +557,7 @@ router.get("/transactions", async (req, res) => {
       page,
       pageSize,
       total,
-      items: rows.map(r => ({
+      items: rows.map((r) => ({
         id: r.id,
         at: r.at,
         party: r.party,

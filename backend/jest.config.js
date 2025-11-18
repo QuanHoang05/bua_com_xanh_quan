@@ -5,8 +5,11 @@ const config = {
   moduleNameMapper: {
     "^node-fetch$": "node-fetch",
   },
-  // Chỉ định các tệp kiểm thử của bạn ở trong thư mục test
-  testMatch: ["<rootDir>/test/**/*.test.js"],
+  // Chỉ định các thư mục chứa tệp test.
+  // Jest sẽ tìm các tệp có đuôi .test.js hoặc .spec.js trong các thư mục này.
+  // Bao gồm cả thư mục `test` cho unit test và `IntegrationTest` cho integration test.
+  roots: ["<rootDir>/test", "<rootDir>/IntegrationTest"],
+
   // Báo cáo HTML tùy chỉnh (tiếng Việt) - Tạo báo cáo đẹp sau mỗi lần chạy test
   reporters: [
     "default",

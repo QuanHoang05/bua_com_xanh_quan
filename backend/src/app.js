@@ -9,9 +9,6 @@ import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 
-/* ---------- Schema bootstrap (MySQL) ---------- */
-import { ensureMySQLSchema } from "./lib/ensure-mysql.js";
-
 /* ---------- Routers ---------- */
 import healthRouter from "./routes/health.js";
 import authRouter from "./routes/auth.js";
@@ -47,13 +44,6 @@ import adminManaUserRouter from "./routes/admin_manauser.js";
 import { requireAuth, requireRole } from "./middlewares/auth.js";
 import adminSettingsRouter from "./routes/admin_settings.js";
 import analyticsDeliveriesRouter from "./routes/analytics.deliveries.js";
-
-/* ====== Init schema (MySQL only) ====== */
-// Ensure MySQL schema is in place when using MySQL driver (required for integration tests).
-// This runs migrations/schema creation when DB_DRIVER is 'mysql'.
-if ((process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql") {
-  await ensureMySQLSchema();
-}
 
 const app = express();
 // In test environment we disable 'trust proxy' to avoid express-rate-limit
@@ -119,6 +109,7 @@ const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 200, // limit each IP to 200 requests per windowMs
   standardHeaders: true,
+  skip: () => process.env.NODE_ENV === 'test', // Disable in test environment
   legacyHeaders: false,
 });
 app.use(globalLimiter);
@@ -128,6 +119,7 @@ const authLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: 10, // limit each IP to 10 requests per minute
   standardHeaders: true,
+  skip: () => process.env.NODE_ENV === 'test', // Disable in test environment
   legacyHeaders: false,
 });
 app.use("/api/auth", authLimiter);

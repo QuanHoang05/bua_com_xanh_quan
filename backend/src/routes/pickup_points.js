@@ -4,18 +4,24 @@ import "dotenv/config";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
 else ({ db } = await import("../lib/db.js"));
 
 const router = Router();
 
 /* ========== DB helpers ========== */
 async function dbGet(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbAll(sql, params = []) {
-  if (useMySQL) { const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 
@@ -23,7 +29,11 @@ async function dbAll(sql, params = []) {
 function parseJSONMaybe(v) {
   if (v == null || v === "") return null;
   if (typeof v === "object") return v;
-  try { return JSON.parse(v); } catch { return v; } // với SQLite lưu TEXT
+  try {
+    return JSON.parse(v);
+  } catch {
+    return v;
+  } // với SQLite lưu TEXT
 }
 function mapPoint(row) {
   return {

@@ -8,10 +8,14 @@
 import { Router } from "express";
 import "dotenv/config";
 
+// Code đúng
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else ({ db } = await import("../lib/db.js"));
+if (useMySQL) {
+  ({ db } = await import("../lib/db.mysql.js"));
+} else {
+  ({ db } = await import("../lib/db.js"));
+}
 
 const router = Router();
 
@@ -107,8 +111,10 @@ function mapCampaignRow(r) {
   );
 
   // prefer cached columns when present; fall back to calculated
-  const raised_amount =
-    toNum(r.raised_amount ?? r.raised, 0) || raised_money_calc;
+  const raised_amount = toNum(
+    r.raised_amount ?? r.raised ?? r.raised_money_calc,
+    0
+  );
   const supporters = toNum(r.supporters, 0) || supporters_calc;
 
   // received meals: if column exists and >0 (MySQL dump có), dùng; SQLite tính động
@@ -153,17 +159,34 @@ function mapCampaignRow(r) {
 /* ======================= GET /api/campaigns ======================= */
 router.get("/", async (req, res) => {
   try {
-    const q = String(req.query.q || "").trim();
+    // Validate input
+    const allowedStatus = ["active", "closed", "all"];
     const status = String(req.query.status || "active").toLowerCase();
+    if (!allowedStatus.includes(status)) {
+      return res.status(400).json({ ok: false, message: "Invalid status" });
+    }
+
     const sort = String(req.query.sort || "latest").toLowerCase();
-    const typeF = String(req.query.type || "").toLowerCase();
+    const allowedSort = ["latest", "progress", "goal", "endSoon"];
+    if (!allowedSort.includes(sort)) {
+      return res.status(400).json({ ok: false, message: "Invalid sort" });
+    }
 
     const page = clamp(parseInt(req.query.page) || 1, 1, 1e9);
     const pageSize = clamp(parseInt(req.query.pageSize) || 24, 1, 1000);
+    if (isNaN(page) || isNaN(pageSize)) {
+      return res.status(400).json({ ok: false, message: "Invalid pagination" });
+    }
+
+    const q = String(req.query.q || "").trim();
+    const typeF = String(req.query.type || "").toLowerCase();
     const offset = (page - 1) * pageSize;
 
     const where = [];
     const p = [];
+    if (q.length > 200) {
+      return res.status(400).json({ ok: false, message: "Query too long" });
+    }
     if (q) {
       where.push(
         "(c.title LIKE ? OR c.description LIKE ? OR c.location LIKE ?)"
@@ -193,20 +216,35 @@ router.get("/", async (req, res) => {
         c.id, c.title, c.description, c.location, c.goal, c.type,
         c.cover, c.cover_url, c.tags, c.meta, c.status, c.created_at, c.updated_at, c.deadline,
         c.target_amount, c.raised_amount, c.supporters, c.meal_price, c.meal_received_qty, c.delivered_meals,
-        ${AGG.raisedMoney}  AS raised_money_calc,
-        ${AGG.supporters}   AS supporters_calc,
-        ${AGG.mealQty}      AS meal_qty_calc,
-        ${AGG.pledgedQty}   AS meal_pledged_qty_calc
+        COALESCE(d_agg.raised_money_calc, 0) AS raised_money_calc,
+        COALESCE(d_agg.supporters_calc, 0) AS supporters_calc,
+        COALESCE(d_agg.meal_qty_calc, 0) AS meal_qty_calc,
+        COALESCE(d_agg.meal_pledged_qty_calc, 0) AS meal_pledged_qty_calc
       FROM campaigns c
+      LEFT JOIN (
+        SELECT
+          campaign_id,
+          SUM(CASE WHEN status='success' AND amount>0 THEN amount ELSE 0 END) AS raised_money_calc,
+          COUNT(CASE WHEN status='success' THEN 1 END) AS supporters_calc,
+          SUM(CASE WHEN status='success' AND qty>0 THEN qty ELSE 0 END) AS meal_qty_calc,
+          SUM(CASE WHEN status IN ('pledged','scheduled') AND qty>0 THEN qty ELSE 0 END) AS meal_pledged_qty_calc
+        FROM donations
+        GROUP BY campaign_id
+      ) d_agg ON c.id = d_agg.campaign_id
       ${whereSQL}
       ORDER BY ${orderSQL}
       LIMIT ${pageSize} OFFSET ${offset}
     `;
-    const totalRow = await dbGet(
-      `SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`,
-      p
-    );
-    const rows = await dbAll(listSQL, p);
+    let totalRow, rows;
+    try {
+      totalRow = await dbGet(
+        `SELECT COUNT(*) AS total FROM campaigns c ${whereSQL}`,
+        p
+      );
+      rows = await dbAll(listSQL, p);
+    } catch (err) {
+      return res.status(400).json({ ok: false, message: "Invalid query" });
+    }
 
     let items = rows.map(mapCampaignRow);
     if (typeF) items = items.filter((it) => (it.type || "money") === typeF);
@@ -219,10 +257,7 @@ router.get("/", async (req, res) => {
       pageSize,
     });
   } catch (e) {
-    console.error("[GET /campaigns] ", e);
-    res
-      .status(500)
-      .json({ ok: false, message: "Không lấy được danh sách chiến dịch" });
+    res.status(400).json({ ok: false, message: "Invalid request" });
   }
 });
 
@@ -291,11 +326,20 @@ router.get("/:id", async (req, res) => {
         c.id, c.title, c.description, c.location, c.goal, c.type,
         c.cover, c.cover_url, c.tags, c.meta, c.status, c.created_at, c.updated_at, c.deadline,
         c.target_amount, c.raised_amount, c.supporters, c.meal_price, c.meal_received_qty, c.delivered_meals,
-        ${AGG.raisedMoney}  AS raised_money_calc,
-        ${AGG.supporters}   AS supporters_calc,
-        ${AGG.mealQty}      AS meal_qty_calc,
-        ${AGG.pledgedQty}   AS meal_pledged_qty_calc
+        COALESCE(d_agg.raised_money_calc, 0) AS raised_money_calc,
+        COALESCE(d_agg.supporters_calc, 0) AS supporters_calc,
+        COALESCE(d_agg.meal_qty_calc, 0) AS meal_qty_calc,
+        COALESCE(d_agg.meal_pledged_qty_calc, 0) AS meal_pledged_qty_calc
       FROM campaigns c
+      LEFT JOIN (
+        SELECT
+          campaign_id,
+          SUM(CASE WHEN status='success' AND amount>0 THEN amount ELSE 0 END) AS raised_money_calc,
+          COUNT(CASE WHEN status='success' THEN 1 END) AS supporters_calc,
+          SUM(CASE WHEN status='success' AND qty>0 THEN qty ELSE 0 END) AS meal_qty_calc,
+          SUM(CASE WHEN status IN ('pledged','scheduled') AND qty>0 THEN qty ELSE 0 END) AS meal_pledged_qty_calc
+        FROM donations GROUP BY campaign_id
+      ) d_agg ON c.id = d_agg.campaign_id
       WHERE c.id=?
     `,
       [id]
@@ -435,11 +479,7 @@ router.get("/active", async (req, res) => {
         c.id, c.title, c.type, c.status, c.updated_at,
         COALESCE(c.cover_url, c.cover) AS cover_url,
         c.meta, c.tags,
-        c.target_amount, c.raised_amount, c.supporters, c.meal_price, c.meal_received_qty, c.delivered_meals,
-        ${AGG.raisedMoney}  AS raised_money_calc,
-        ${AGG.supporters}   AS supporters_calc,
-        ${AGG.mealQty}      AS meal_qty_calc,
-        ${AGG.pledgedQty}   AS meal_pledged_qty_calc
+        c.target_amount, c.raised_amount, c.supporters, c.meal_price, c.meal_received_qty, c.delivered_meals
       FROM campaigns c
       WHERE c.status='active'
       ORDER BY c.updated_at DESC
@@ -539,12 +579,10 @@ router.post("/:id/donations", async (req, res) => {
     if (qtyVal > 0 && amountVal <= 0) kind = "meal";
     else if (amountVal > 0 && qtyVal <= 0) kind = "money";
     else {
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "Cần truyền *hoặc* qty>0 (in-kind) *hoặc* amount>0 (money)",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "Cần truyền *hoặc* qty>0 (in-kind) *hoặc* amount>0 (money)",
+      });
     }
 
     // ---- Insert donation
@@ -665,12 +703,10 @@ router.post("/meals/donate", async (req, res) => {
 
     const qtyVal = toNum(servings, 0);
     if (!in_kind || qtyVal <= 0)
-      return res
-        .status(400)
-        .json({
-          ok: false,
-          message: "Yêu cầu không hợp lệ (in_kind + servings > 0)",
-        });
+      return res.status(400).json({
+        ok: false,
+        message: "Yêu cầu không hợp lệ (in_kind + servings > 0)",
+      });
 
     const donorName =
       (contact_name || "").toString().trim().slice(0, 120) || "Ẩn danh";

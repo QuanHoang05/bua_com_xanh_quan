@@ -8,26 +8,54 @@ import { requireAuth, requireRole } from "../middlewares/auth.js";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite").toLowerCase() === "mysql";
 let db;
-if (useMySQL) ({ db } = await import("../lib/db.mysql.js"));
-else          ({ db } = await import("../lib/db.js"));
+if (useMySQL) ({ db } = await import("../lib/db.js"));
+else ({ db } = await import("../lib/db.js"));
 
 /* =============== utils =============== */
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const toNum = (v, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 const safe = (v, d = "") => (v == null ? d : String(v));
-const parseJson = (raw, fb = {}) => { try { if (!raw) return fb; return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return fb; } };
-const normalizeTags = (raw) => { if (!raw) return []; if (Array.isArray(raw)) return raw; try { const p = typeof raw === "string" ? JSON.parse(raw) : raw; return Array.isArray(p) ? p : []; } catch { return []; } };
+const parseJson = (raw, fb = {}) => {
+  try {
+    if (!raw) return fb;
+    return typeof raw === "string" ? JSON.parse(raw) : raw;
+  } catch {
+    return fb;
+  }
+};
+const normalizeTags = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  try {
+    const p = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(p) ? p : [];
+  } catch {
+    return [];
+  }
+};
 
 async function dbGet(sql, params = []) {
-  if (useMySQL) { if (typeof db.get === "function") return await db.get(sql, params); const [rows] = await db.query(sql, params); return rows?.[0] ?? null; }
+  if (useMySQL) {
+    if (typeof db.get === "function") return await db.get(sql, params);
+    const [rows] = await db.query(sql, params);
+    return rows?.[0] ?? null;
+  }
   return db.prepare(sql).get(...params);
 }
 async function dbAll(sql, params = []) {
-  if (useMySQL) { if (typeof db.all === "function") return await db.all(sql, params); const [rows] = await db.query(sql, params); return rows ?? []; }
+  if (useMySQL) {
+    if (typeof db.all === "function") return await db.all(sql, params);
+    const [rows] = await db.query(sql, params);
+    return rows ?? [];
+  }
   return db.prepare(sql).all(...params);
 }
 async function dbRun(sql, params = []) {
-  if (useMySQL) { if (typeof db.run === "function") return await db.run(sql, params); const [result] = await db.query(sql, params); return result; }
+  if (useMySQL) {
+    if (typeof db.run === "function") return await db.run(sql, params);
+    const [result] = await db.query(sql, params);
+    return result;
+  }
   return db.prepare(sql).run(...params);
 }
 
@@ -42,7 +70,8 @@ function mapCampaignRow(r) {
   const meal_received_qty = toNum(r.meal_received_qty, 0);
 
   if (!meta.meal) meta.meal = {};
-  if (toNum(meta.meal.received_qty, -1) !== meal_received_qty) meta.meal.received_qty = meal_received_qty;
+  if (toNum(meta.meal.received_qty, -1) !== meal_received_qty)
+    meta.meal.received_qty = meal_received_qty;
   if (toNum(meta.meal.price, -1) !== meal_price) meta.meal.price = meal_price;
 
   return {
@@ -55,8 +84,14 @@ function mapCampaignRow(r) {
     updated_at: r.updated_at,
     deadline: r.deadline,
     cover_url: r.cover_url || r.cover || "",
-    goal, raised, target_amount: goal, raised_amount: raised, supporters,
-    type, meal_price, meal_unit: meta?.meal?.unit || "phần",
+    goal,
+    raised,
+    target_amount: goal,
+    raised_amount: raised,
+    supporters,
+    type,
+    meal_price,
+    meal_unit: meta?.meal?.unit || "phần",
     meal_target_qty: toNum(meta?.meal?.target_qty, 0),
     meal_received_qty,
     meta,
@@ -73,10 +108,13 @@ function buildOrderSQL(sort) {
       return `CASE WHEN COALESCE(target_amount,0)>0
                 THEN (COALESCE(raised,raised_amount,0)*1.0/NULLIF(target_amount,0))
                 ELSE 0 END DESC, created_at DESC`;
-    case "goal": return `target_amount DESC, created_at DESC`;
-    case "endsoon": return `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, deadline ASC, created_at DESC`;
+    case "goal":
+      return `target_amount DESC, created_at DESC`;
+    case "endsoon":
+      return `CASE WHEN deadline IS NULL THEN 1 ELSE 0 END ASC, deadline ASC, created_at DESC`;
     case "latest":
-    default: return `created_at DESC`;
+    default:
+      return `created_at DESC`;
   }
 }
 
@@ -88,61 +126,80 @@ const router = Router();
 /* ---- GET / (list) ---- */
 router.get("/", async (req, res) => {
   try {
-    const q = String(req.query.q || "").trim();
+    // Validate input
+    const allowedStatus = ["active", "closed", "all"];
     const status = String(req.query.status || "active").toLowerCase();
-    const typeFilter = String(req.query.type || "").toLowerCase();
-    const sort = String(req.query.sort || "latest");
-    const page = clamp(parseInt(req.query.page) || 1, 1, 1e6);
-    const pageSize = clamp(parseInt(req.query.pageSize) || 10, 1, 100);
+    if (!allowedStatus.includes(status)) {
+      return res.status(400).json({ ok: false, message: "Invalid status" });
+    }
+
+    const sort = String(req.query.sort || "latest").toLowerCase();
+    const allowedSort = ["latest", "progress", "goal", "endSoon"];
+    if (!allowedSort.includes(sort)) {
+      return res.status(400).json({ ok: false, message: "Invalid sort" });
+    }
+
+    const page = clamp(parseInt(req.query.page) || 1, 1, 1e9);
+    const pageSize = clamp(parseInt(req.query.pageSize) || 24, 1, 1000);
+    if (isNaN(page) || isNaN(pageSize)) {
+      return res.status(400).json({ ok: false, message: "Invalid pagination" });
+    }
+
+    const q = String(req.query.q || "").trim();
+    const typeF = String(req.query.type || "").toLowerCase();
     const offset = (page - 1) * pageSize;
 
-    const where = [], params = [];
-    if (q) { where.push("(title LIKE ? OR description LIKE ? OR location LIKE ?)"); params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
-    if (status && status !== "all") { where.push("status=?"); params.push(status); }
-    if (typeFilter) { where.push("LOWER(`type`)=?"); params.push(typeFilter); }
+    const where = [];
+    const params = [];
+    if (q.length > 200) {
+      return res.status(400).json({ ok: false, message: "Query too long" });
+    }
+    if (q) {
+      where.push(
+        "(c.title LIKE ? OR c.description LIKE ? OR c.location LIKE ?)"
+      );
+      params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    }
+    if (status !== "all") {
+      where.push("c.status=?");
+      params.push(status);
+    }
 
     const whereSQL = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const orderSQL = buildOrderSQL(sort);
 
-    const totalRow = await dbGet(`SELECT COUNT(*) AS total FROM campaigns ${whereSQL}`, params);
-    const rows = await dbAll(`
-      SELECT id, owner_id, title, \`type\`, location,
-             goal, raised, supporters, tags, meta, cover, status,
-             created_at, description, cover_url,
-             target_amount, raised_amount, updated_at, deadline,
-             meal_price, meal_received_qty
-      FROM campaigns
-      ${whereSQL}
-      ORDER BY ${orderSQL}
-      LIMIT ? OFFSET ?`, [...params, pageSize, offset]);
+    let totalRow, rows;
+    try {
+      totalRow = await dbGet(
+        `SELECT COUNT(*) AS total FROM campaigns ${whereSQL}`,
+        params
+      );
+      rows = await dbAll(
+        `
+        SELECT c.id, c.owner_id, c.title, c."type", c.location,
+               goal, raised, supporters, tags, meta, cover, status,
+               created_at, description, cover_url,
+               target_amount, raised_amount, updated_at, deadline,
+               meal_price, meal_received_qty
+        FROM campaigns c
+        ${whereSQL}
+        ORDER BY ${orderSQL}
+        LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset]
+      );
+    } catch (err) {
+      return res.status(400).json({ ok: false, message: "Invalid query" });
+    }
 
-    res.json({ ok: true, items: rows.map(mapCampaignRow), total: toNum(totalRow?.total, 0), page, pageSize });
-  } catch (err) {
-    console.error("[GET /api/admin/campaigns] error:", err);
-    res.status(500).json({ ok: false, message: "Không lấy được danh sách chiến dịch" });
-  }
-});
-
-/* ---- GET /stats ---- */
-router.get("/stats", async (_req, res) => {
-  try {
-    const row = await dbGet(
-      `SELECT COUNT(*) AS campaigns,
-              COALESCE(SUM(COALESCE(raised,raised_amount,0)),0) AS raised,
-              COALESCE(SUM(supporters),0) AS supporters,
-              SUM(CASE WHEN status='active' THEN 1 ELSE 0 END) AS active
-       FROM campaigns`, []
-    );
     res.json({
       ok: true,
-      campaigns: toNum(row?.campaigns, 0),
-      raised: toNum(row?.raised, 0),
-      supporters: toNum(row?.supporters, 0),
-      active: toNum(row?.active, 0),
+      items: rows.map(mapCampaignRow),
+      total: toNum(totalRow?.total, 0),
+      page,
+      pageSize,
     });
   } catch (err) {
-    console.error("[GET /api/admin/campaigns/stats] error:", err);
-    res.status(500).json({ ok: false, message: "Không lấy được thống kê chiến dịch" });
+    res.status(400).json({ ok: false, message: "Invalid request" });
   }
 });
 
@@ -156,7 +213,8 @@ router.get("/:id", async (req, res) => {
               created_at, description, cover_url,
               target_amount, raised_amount, updated_at, deadline,
               meal_price, meal_received_qty
-       FROM campaigns WHERE id=?`, [id]
+       FROM campaigns WHERE id=?`,
+      [id]
     );
     if (!row) return res.status(404).json({ ok: false, message: "Not found" });
     res.json({ ok: true, ...mapCampaignRow(row) });
@@ -181,19 +239,24 @@ router.get("/:id/donations", async (req, res) => {
     const id = req.params.id;
     const rawStatus = (req.query.status || "success").toString().toLowerCase();
     const kind = (req.query.kind || "all").toString().toLowerCase(); // meal|money|all
-    const scope = (req.query.scope || "").toString().toLowerCase();  // waiting_meal
+    const scope = (req.query.scope || "").toString().toLowerCase(); // waiting_meal
     const limit = clamp(parseInt(req.query.limit) || 500, 1, 1000);
     const offset = clamp(parseInt(req.query.offset) || 0, 0, 1e9);
 
     // Alias: status=pending_meal <=> scope=waiting_meal
-    const effectiveScope = scope || (rawStatus === "pending_meal" ? "waiting_meal" : "");
+    const effectiveScope =
+      scope || (rawStatus === "pending_meal" ? "waiting_meal" : "");
 
     const where = ["campaign_id=?"];
     const params = [id];
 
     // kind filter
-    if (kind === "meal") where.push("(LOWER(type) IN ('food','goods') OR COALESCE(qty,0) > 0)");
-    else if (kind === "money") where.push("(LOWER(type)='money' OR (COALESCE(qty,0)=0 AND COALESCE(amount,0)>0))");
+    if (kind === "meal")
+      where.push("(LOWER(type) IN ('food','goods') OR COALESCE(qty,0) > 0)");
+    else if (kind === "money")
+      where.push(
+        "(LOWER(type)='money' OR (COALESCE(qty,0)=0 AND COALESCE(amount,0)>0))"
+      );
 
     // scope waiting_meal
     if (effectiveScope === "waiting_meal") {
@@ -207,7 +270,8 @@ router.get("/:id/donations", async (req, res) => {
           const { isMealExpr, waitingExpr } = mealWaitingSQLParts();
           where.push(`${isMealExpr} AND ${waitingExpr}`);
         } else {
-          where.push("LOWER(status)=?"); params.push(rawStatus);
+          where.push("LOWER(status)=?");
+          params.push(rawStatus);
         }
       }
     }
@@ -219,7 +283,8 @@ router.get("/:id/donations", async (req, res) => {
        FROM donations
        WHERE ${where.join(" AND ")}
        ORDER BY COALESCE(paid_at, created_at) DESC, id DESC
-       LIMIT ? OFFSET ?`, [...params, limit, offset]
+       LIMIT ? OFFSET ?`,
+      [...params, limit, offset]
     );
 
     const safeItems = items.map((it) => ({
@@ -241,7 +306,9 @@ router.get("/:id/donations", async (req, res) => {
     res.json({ ok: true, items: safeItems });
   } catch (err) {
     console.error("[GET /api/admin/campaigns/:id/donations] error:", err);
-    res.status(500).json({ ok: false, message: "Không lấy được danh sách ủng hộ" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Không lấy được danh sách ủng hộ" });
   }
 });
 
@@ -249,15 +316,21 @@ router.get("/:id/donations", async (req, res) => {
 function buildMeta(c = {}) {
   const paymentMethod = c.payment?.method || c.payment_method || "momo";
   const payment =
-    paymentMethod === "momo" ? { method: "momo" } :
-    paymentMethod === "custom_qr" ? { method: "custom_qr", qr_url: c.payment?.qr_url || c.payment_qr_url || "" } :
-    { method: "vietqr",
-      bank: c.payment?.bank || c.payment_bank || "",
-      account: c.payment?.account || c.payment_account || "",
-      name: c.payment?.name || c.payment_name || "",
-      memo: c.payment?.memo || c.payment_memo || "",
-      qr_url: c.payment?.qr_url || c.payment_qr_url || "",
-    };
+    paymentMethod === "momo"
+      ? { method: "momo" }
+      : paymentMethod === "custom_qr"
+      ? {
+          method: "custom_qr",
+          qr_url: c.payment?.qr_url || c.payment_qr_url || "",
+        }
+      : {
+          method: "vietqr",
+          bank: c.payment?.bank || c.payment_bank || "",
+          account: c.payment?.account || c.payment_account || "",
+          name: c.payment?.name || c.payment_name || "",
+          memo: c.payment?.memo || c.payment_memo || "",
+          qr_url: c.payment?.qr_url || c.payment_qr_url || "",
+        };
 
   return {
     type: (c.type || c.meta?.type || "money").toString(),
@@ -279,14 +352,17 @@ function buildMeta(c = {}) {
 router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
   try {
     const c = req.body || {};
-    const sqliteId = !useMySQL ? (c.id || crypto.randomUUID()) : null;
+    const sqliteId = !useMySQL ? c.id || crypto.randomUUID() : null;
 
     const metaObj = c.meta != null ? c.meta : buildMeta(c);
     const tags = Array.isArray(c.tags) ? c.tags : [];
 
     const target = toNum(c.target_amount ?? c.goal, 0);
     const raised = toNum(c.raised_amount ?? c.raised, 0);
-    const mealQty = toNum(c.meal_received_qty ?? metaObj?.meal?.received_qty, 0);
+    const mealQty = toNum(
+      c.meal_received_qty ?? metaObj?.meal?.received_qty,
+      0
+    );
     const mealPrice = toNum(c.meal_price ?? metaObj?.meal?.price, 10000);
 
     const sql = `
@@ -314,11 +390,20 @@ router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
       safe(c.title).trim(),
       (c.type || metaObj.type || "money").toString(),
       safe(c.location),
-      target, raised, toNum(c.supporters, 0),
-      JSON.stringify(tags), JSON.stringify(metaObj), safe(c.cover), safe(c.status, "draft"),
-      safe(c.description), safe(c.cover_url ?? c.cover),
-      target, raised, c.end_at ?? c.deadline ?? null,
-      mealPrice, mealQty
+      target,
+      raised,
+      toNum(c.supporters, 0),
+      JSON.stringify(tags),
+      JSON.stringify(metaObj),
+      safe(c.cover),
+      safe(c.status, "draft"),
+      safe(c.description),
+      safe(c.cover_url ?? c.cover),
+      target,
+      raised,
+      c.end_at ?? c.deadline ?? null,
+      mealPrice,
+      mealQty
     );
 
     const result = await dbRun(sql, args);
@@ -330,7 +415,8 @@ router.post("/", requireAuth, requireRole("admin"), async (req, res) => {
               created_at, description, cover_url,
               target_amount, raised_amount, updated_at, deadline,
               meal_price, meal_received_qty
-       FROM campaigns WHERE id=?`, [newId]
+       FROM campaigns WHERE id=?`,
+      [newId]
     );
     res.status(201).json({ ok: true, ...mapCampaignRow(row) });
   } catch (err) {
@@ -352,20 +438,45 @@ router.patch("/:id", requireAuth, requireRole("admin"), async (req, res) => {
     const mergedMeta = {
       ...curMeta,
       ...incomingMeta,
-      type: (incomingMeta.type || c.type || cur.type || curMeta.type || "money").toString(),
+      type: (
+        incomingMeta.type ||
+        c.type ||
+        cur.type ||
+        curMeta.type ||
+        "money"
+      ).toString(),
       meal: { ...(curMeta.meal || {}), ...(incomingMeta.meal || {}) },
       payment: { ...(curMeta.payment || {}), ...(incomingMeta.payment || {}) },
-      ledger: { enabled: true, ...(curMeta.ledger || {}), ...(incomingMeta.ledger || {}) },
+      ledger: {
+        enabled: true,
+        ...(curMeta.ledger || {}),
+        ...(incomingMeta.ledger || {}),
+      },
     };
-    if (c.meal_received_qty != null) { mergedMeta.meal = mergedMeta.meal || {}; mergedMeta.meal.received_qty = toNum(c.meal_received_qty, 0); }
+    if (c.meal_received_qty != null) {
+      mergedMeta.meal = mergedMeta.meal || {};
+      mergedMeta.meal.received_qty = toNum(c.meal_received_qty, 0);
+    }
 
-    const target = toNum(c.target_amount ?? c.goal ?? cur.target_amount ?? cur.goal, 0);
-    const raised = toNum(c.raised_amount ?? c.raised ?? cur.raised_amount ?? cur.raised, 0);
-    const mealQty = toNum(c.meal_received_qty ?? mergedMeta?.meal?.received_qty ?? cur.meal_received_qty, 0);
+    const target = toNum(
+      c.target_amount ?? c.goal ?? cur.target_amount ?? cur.goal,
+      0
+    );
+    const raised = toNum(
+      c.raised_amount ?? c.raised ?? cur.raised_amount ?? cur.raised,
+      0
+    );
+    const mealQty = toNum(
+      c.meal_received_qty ??
+        mergedMeta?.meal?.received_qty ??
+        cur.meal_received_qty,
+      0
+    );
     const mealPrice = toNum(c.meal_price ?? cur.meal_price, 10000);
 
     const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
-    await dbRun(`
+    await dbRun(
+      `
       UPDATE campaigns SET
         owner_id=?,
         title=?, \`type\`=?, location=?,
@@ -380,15 +491,23 @@ router.patch("/:id", requireAuth, requireRole("admin"), async (req, res) => {
         safe(c.title ?? cur.title).trim(),
         (c.type ?? mergedMeta.type ?? cur.type ?? "money").toString(),
         safe(c.location ?? cur.location),
-        target, raised, toNum(c.supporters ?? cur.supporters, 0),
-        JSON.stringify(Array.isArray(c.tags) ? c.tags : normalizeTags(cur.tags)),
+        target,
+        raised,
+        toNum(c.supporters ?? cur.supporters, 0),
+        JSON.stringify(
+          Array.isArray(c.tags) ? c.tags : normalizeTags(cur.tags)
+        ),
         JSON.stringify(mergedMeta),
         safe(c.cover ?? cur.cover),
         safe(c.status ?? cur.status ?? "draft"),
         safe(c.description ?? cur.description),
         safe(c.cover_url ?? cur.cover_url ?? cur.cover),
-        target, raised, c.end_at ?? c.deadline ?? cur.deadline ?? null,
-        mealPrice, mealQty, id,
+        target,
+        raised,
+        c.end_at ?? c.deadline ?? cur.deadline ?? null,
+        mealPrice,
+        mealQty,
+        id,
       ]
     );
 
@@ -398,12 +517,15 @@ router.patch("/:id", requireAuth, requireRole("admin"), async (req, res) => {
               created_at, description, cover_url,
               target_amount, raised_amount, updated_at, deadline,
               meal_price, meal_received_qty
-       FROM campaigns WHERE id=?`, [id]
+       FROM campaigns WHERE id=?`,
+      [id]
     );
     res.json({ ok: true, ...mapCampaignRow(row) });
   } catch (err) {
     console.error("[PATCH /api/admin/campaigns/:id] error:", err);
-    res.status(500).json({ ok: false, message: "Cập nhật chiến dịch thất bại" });
+    res
+      .status(500)
+      .json({ ok: false, message: "Cập nhật chiến dịch thất bại" });
   }
 });
 
@@ -422,8 +544,9 @@ router.delete("/:id", requireAuth, requireRole("admin"), async (req, res) => {
 async function recalcCampaignFromDonations(campaignId) {
   const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
   if (useMySQL) {
-    try { await dbRun(`CALL recalc_campaign(?)`, [campaignId]); }
-    catch {
+    try {
+      await dbRun(`CALL recalc_campaign(?)`, [campaignId]);
+    } catch {
       await dbRun(
         `UPDATE campaigns c
          LEFT JOIN (
@@ -439,125 +562,228 @@ async function recalcCampaignFromDonations(campaignId) {
     }
     const qtyRow = await dbGet(
       `SELECT COALESCE(SUM(qty),0) AS q
-       FROM donations WHERE campaign_id=? AND status='success' AND COALESCE(qty,0)>0`, [campaignId]
+       FROM donations WHERE campaign_id=? AND status='success' AND COALESCE(qty,0)>0`,
+      [campaignId]
     );
     const addQty = toNum(qtyRow?.q, 0);
     const moneyRow = await dbGet(
       `SELECT COALESCE(SUM(amount),0) AS s FROM donations
-       WHERE campaign_id=? AND status='success' AND amount>0`, [campaignId]
+       WHERE campaign_id=? AND status='success' AND amount>0`,
+      [campaignId]
     );
-    const info = await dbGet(`SELECT meal_price FROM campaigns WHERE id=?`, [campaignId]);
-    const moneyMeals = Math.floor(toNum(moneyRow?.s, 0) / Math.max(1, toNum(info?.meal_price, 10000)));
+    const info = await dbGet(`SELECT meal_price FROM campaigns WHERE id=?`, [
+      campaignId,
+    ]);
+    const moneyMeals = Math.floor(
+      toNum(moneyRow?.s, 0) / Math.max(1, toNum(info?.meal_price, 10000))
+    );
 
-    await dbRun(`UPDATE campaigns SET meal_received_qty=?, updated_at=${nowSQL} WHERE id=?`,
+    await dbRun(
+      `UPDATE campaigns SET meal_received_qty=?, updated_at=${nowSQL} WHERE id=?`,
       [moneyMeals + addQty, campaignId]
     );
-    const row = await dbGet(`SELECT meta, meal_received_qty, meal_price FROM campaigns WHERE id=?`, [campaignId]);
-    const meta = parseJson(row?.meta, {}); if (!meta.meal) meta.meal = {};
-    meta.meal.received_qty = toNum(row?.meal_received_qty, 0); meta.meal.price = toNum(row?.meal_price, 0);
-    await dbRun(`UPDATE campaigns SET meta=?, updated_at=${nowSQL} WHERE id=?`, [JSON.stringify(meta), campaignId]);
+    const row = await dbGet(
+      `SELECT meta, meal_received_qty, meal_price FROM campaigns WHERE id=?`,
+      [campaignId]
+    );
+    const meta = parseJson(row?.meta, {});
+    if (!meta.meal) meta.meal = {};
+    meta.meal.received_qty = toNum(row?.meal_received_qty, 0);
+    meta.meal.price = toNum(row?.meal_price, 0);
+    await dbRun(
+      `UPDATE campaigns SET meta=?, updated_at=${nowSQL} WHERE id=?`,
+      [JSON.stringify(meta), campaignId]
+    );
   } else {
-    const money = await dbGet(`SELECT COALESCE(SUM(amount),0) AS s FROM donations WHERE campaign_id=? AND status='success' AND amount>0`, [campaignId]);
-    const cnt = await dbGet(`SELECT SUM(status='success') AS c FROM donations WHERE campaign_id=?`, [campaignId]);
-    const meal = await dbGet(`SELECT COALESCE(SUM(qty),0) AS q FROM donations WHERE campaign_id=? AND status='success' AND qty>0`, [campaignId]);
-    const info = await dbGet(`SELECT meal_price FROM campaigns WHERE id=?`, [campaignId]);
-    const moneyMeals = Math.floor(toNum(money?.s, 0) / Math.max(1, toNum(info?.meal_price, 10000)));
+    const money = await dbGet(
+      `SELECT COALESCE(SUM(amount),0) AS s FROM donations WHERE campaign_id=? AND status='success' AND amount>0`,
+      [campaignId]
+    );
+    const cnt = await dbGet(
+      `SELECT SUM(status='success') AS c FROM donations WHERE campaign_id=?`,
+      [campaignId]
+    );
+    const meal = await dbGet(
+      `SELECT COALESCE(SUM(qty),0) AS q FROM donations WHERE campaign_id=? AND status='success' AND qty>0`,
+      [campaignId]
+    );
+    const info = await dbGet(`SELECT meal_price FROM campaigns WHERE id=?`, [
+      campaignId,
+    ]);
+    const moneyMeals = Math.floor(
+      toNum(money?.s, 0) / Math.max(1, toNum(info?.meal_price, 10000))
+    );
     await dbRun(
       `UPDATE campaigns
          SET raised=?, supporters=?, meal_received_qty=?, updated_at=${nowSQL}
-       WHERE id=?`, [toNum(money?.s, 0), toNum(cnt?.c, 0), moneyMeals + toNum(meal?.q, 0), campaignId]
+       WHERE id=?`,
+      [
+        toNum(money?.s, 0),
+        toNum(cnt?.c, 0),
+        moneyMeals + toNum(meal?.q, 0),
+        campaignId,
+      ]
     );
-    const row = await dbGet(`SELECT meta, meal_received_qty, meal_price FROM campaigns WHERE id=?`, [campaignId]);
-    const meta = parseJson(row?.meta, {}); if (!meta.meal) meta.meal = {};
-    meta.meal.received_qty = toNum(row?.meal_received_qty, 0); meta.meal.price = toNum(row?.meal_price, 0);
-    await dbRun(`UPDATE campaigns SET meta=?, updated_at=${nowSQL} WHERE id=?`, [JSON.stringify(meta), campaignId]);
+    const row = await dbGet(
+      `SELECT meta, meal_received_qty, meal_price FROM campaigns WHERE id=?`,
+      [campaignId]
+    );
+    const meta = parseJson(row?.meta, {});
+    if (!meta.meal) meta.meal = {};
+    meta.meal.received_qty = toNum(row?.meal_received_qty, 0);
+    meta.meal.price = toNum(row?.meal_price, 0);
+    await dbRun(
+      `UPDATE campaigns SET meta=?, updated_at=${nowSQL} WHERE id=?`,
+      [JSON.stringify(meta), campaignId]
+    );
   }
 }
 
 /* ---- POST /:id/donations (manual add) ---- */
-router.post("/:id/donations", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const campaign_id = req.params.id;
-    const {
-      type = "money", amount = 0, qty = 0, currency = "VND",
-      donor_name = "", donor_note = "", memo = "",
-      paid_at = null, bank_txn_id = null, bank_code = null, bank_account = null,
-      status = "success",
-    } = req.body || {};
+router.post(
+  "/:id/donations",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const campaign_id = req.params.id;
+      const {
+        type = "money",
+        amount = 0,
+        qty = 0,
+        currency = "VND",
+        donor_name = "",
+        donor_note = "",
+        memo = "",
+        paid_at = null,
+        bank_txn_id = null,
+        bank_code = null,
+        bank_account = null,
+        status = "success",
+      } = req.body || {};
 
-    const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
-    await dbRun(
-      `INSERT INTO donations
+      const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
+      await dbRun(
+        `INSERT INTO donations
         (order_id, campaign_id, user_id, type, amount, qty, currency,
          donor_name, donor_note, bank_txn_id, bank_code, bank_account, memo,
          status, paid_at, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ${nowSQL})`,
-      [
-        bank_txn_id || "", campaign_id, null, type,
-        toNum(amount, 0), toNum(qty, 0), currency,
-        donor_name || null, donor_note || null,
-        bank_txn_id || null, bank_code || null, bank_account || null,
-        memo || null, status, paid_at,
-      ]
-    );
+        [
+          bank_txn_id || "",
+          campaign_id,
+          null,
+          type,
+          toNum(amount, 0),
+          toNum(qty, 0),
+          currency,
+          donor_name || null,
+          donor_note || null,
+          bank_txn_id || null,
+          bank_code || null,
+          bank_account || null,
+          memo || null,
+          status,
+          paid_at,
+        ]
+      );
 
-    if (status === "success") await recalcCampaignFromDonations(campaign_id);
-    res.status(201).json({ ok: true });
-  } catch (err) {
-    console.error("[POST /api/admin/campaigns/:id/donations] error:", err);
-    res.status(500).json({ ok: false, message: "Thêm ủng hộ thất bại" });
+      if (status === "success") await recalcCampaignFromDonations(campaign_id);
+      res.status(201).json({ ok: true });
+    } catch (err) {
+      console.error("[POST /api/admin/campaigns/:id/donations] error:", err);
+      res.status(500).json({ ok: false, message: "Thêm ủng hộ thất bại" });
+    }
   }
-});
+);
 
 /* ---- PATCH /:id/donations/:donationId ---- */
-router.patch("/:id/donations/:donationId", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const campaign_id = req.params.id;
-    const donationId = req.params.donationId;
+router.patch(
+  "/:id/donations/:donationId",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const campaign_id = req.params.id;
+      const donationId = req.params.donationId;
 
-    const cur = await dbGet(`SELECT id, campaign_id, status FROM donations WHERE id=? AND campaign_id=?`, [donationId, campaign_id]);
-    if (!cur) return res.status(404).json({ ok: false, message: "Donation không tồn tại" });
+      const cur = await dbGet(
+        `SELECT id, campaign_id, status FROM donations WHERE id=? AND campaign_id=?`,
+        [donationId, campaign_id]
+      );
+      if (!cur)
+        return res
+          .status(404)
+          .json({ ok: false, message: "Donation không tồn tại" });
 
-    const nextStatus = (req.body?.status || cur.status || "").toLowerCase();
-    const amount = req.body?.amount;
-    const qty = req.body?.qty;
+      const nextStatus = (req.body?.status || cur.status || "").toLowerCase();
+      const amount = req.body?.amount;
+      const qty = req.body?.qty;
 
-    const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
-    const sets = [], args = [];
-    if (nextStatus) { sets.push("status=?"); args.push(nextStatus); }
-    if (amount != null) { sets.push("amount=?"); args.push(toNum(amount, 0)); }
-    if (qty != null) { sets.push("qty=?"); args.push(toNum(qty, 0)); }
-    if (nextStatus === "success") sets.push(`paid_at=COALESCE(paid_at, ${nowSQL})`);
-    if (!sets.length) return res.json({ ok: true, noop: true });
+      const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
+      const sets = [],
+        args = [];
+      if (nextStatus) {
+        sets.push("status=?");
+        args.push(nextStatus);
+      }
+      if (amount != null) {
+        sets.push("amount=?");
+        args.push(toNum(amount, 0));
+      }
+      if (qty != null) {
+        sets.push("qty=?");
+        args.push(toNum(qty, 0));
+      }
+      if (nextStatus === "success")
+        sets.push(`paid_at=COALESCE(paid_at, ${nowSQL})`);
+      if (!sets.length) return res.json({ ok: true, noop: true });
 
-    await dbRun(`UPDATE donations SET ${sets.join(", ")} WHERE id=?`, [...args, donationId]);
-    await recalcCampaignFromDonations(campaign_id);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("[PATCH /api/admin/campaigns/:id/donations/:donationId] error:", err);
-    res.status(500).json({ ok: false, message: "Cập nhật donation thất bại" });
+      await dbRun(`UPDATE donations SET ${sets.join(", ")} WHERE id=?`, [
+        ...args,
+        donationId,
+      ]);
+      await recalcCampaignFromDonations(campaign_id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error(
+        "[PATCH /api/admin/campaigns/:id/donations/:donationId] error:",
+        err
+      );
+      res
+        .status(500)
+        .json({ ok: false, message: "Cập nhật donation thất bại" });
+    }
   }
-});
+);
 
 /* ---- POST /:id/recalc ---- */
-router.post("/:id/recalc", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const id = req.params.id;
-    await recalcCampaignFromDonations(id);
-    const row = await dbGet(
-      `SELECT id, owner_id, title, \`type\`, location,
+router.post(
+  "/:id/recalc",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const id = req.params.id;
+      await recalcCampaignFromDonations(id);
+      const row = await dbGet(
+        `SELECT id, owner_id, title, \`type\`, location,
               goal, raised, supporters, tags, meta, cover, status,
               created_at, description, cover_url,
               target_amount, raised_amount, updated_at, deadline,
               meal_price, meal_received_qty
-       FROM campaigns WHERE id=?`, [id]
-    );
-    res.json({ ok: true, ...mapCampaignRow(row) });
-  } catch (err) {
-    console.error("[POST /api/admin/campaigns/:id/recalc] error:", err);
-    res.status(500).json({ ok: false, message: "Không recalc được chiến dịch" });
+       FROM campaigns WHERE id=?`,
+        [id]
+      );
+      res.json({ ok: true, ...mapCampaignRow(row) });
+    } catch (err) {
+      console.error("[POST /api/admin/campaigns/:id/recalc] error:", err);
+      res
+        .status(500)
+        .json({ ok: false, message: "Không recalc được chiến dịch" });
+    }
   }
-});
+);
 
 /* ======================================================================
    Donations router (named export) -> mount at /api/admin/donations
@@ -565,120 +791,193 @@ router.post("/:id/recalc", requireAuth, requireRole("admin"), async (req, res) =
 const donationsRouter = Router();
 
 /* GET /api/admin/donations?status=&campaign_id=&kind=&scope=&order=&limit=&offset= */
-donationsRouter.get("/", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const rawStatus = String(req.query.status || "").toLowerCase();
-    const campaignId = req.query.campaign_id ? String(req.query.campaign_id) : null;
-    const kind = (req.query.kind || "all").toString().toLowerCase();  // meal|money|all
-    const scope = (req.query.scope || "").toString().toLowerCase();   // waiting_meal
-    const order = (req.query.order || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-    const limit = clamp(parseInt(req.query.limit) || 50, 1, 500);
-    const offset = clamp(parseInt(req.query.offset) || 0, 0, 1e9);
+donationsRouter.get(
+  "/",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const rawStatus = String(req.query.status || "").toLowerCase();
+      const campaignId = req.query.campaign_id
+        ? String(req.query.campaign_id)
+        : null;
+      const kind = (req.query.kind || "all").toString().toLowerCase(); // meal|money|all
+      const scope = (req.query.scope || "").toString().toLowerCase(); // waiting_meal
+      const order =
+        (req.query.order || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+      const limit = clamp(parseInt(req.query.limit) || 50, 1, 500);
+      const offset = clamp(parseInt(req.query.offset) || 0, 0, 1e9);
 
-    const where = [], params = [];
-    if (campaignId) { where.push("campaign_id=?"); params.push(campaignId); }
+      const where = [],
+        params = [];
+      if (campaignId) {
+        where.push("campaign_id=?");
+        params.push(campaignId);
+      }
 
-    // kind filter
-    if (kind === "meal") where.push("(LOWER(type) IN ('food','goods') OR COALESCE(qty,0) > 0)");
-    else if (kind === "money") where.push("(LOWER(type)='money' OR (COALESCE(qty,0)=0 AND COALESCE(amount,0)>0))");
+      // kind filter
+      if (kind === "meal")
+        where.push("(LOWER(type) IN ('food','goods') OR COALESCE(qty,0) > 0)");
+      else if (kind === "money")
+        where.push(
+          "(LOWER(type)='money' OR (COALESCE(qty,0)=0 AND COALESCE(amount,0)>0))"
+        );
 
-    // scope alias
-    const effectiveScope = scope || (rawStatus === "pending_meal" ? "waiting_meal" : "");
+      // scope alias
+      const effectiveScope =
+        scope || (rawStatus === "pending_meal" ? "waiting_meal" : "");
 
-    if (effectiveScope === "waiting_meal") {
-      const { isMealExpr, waitingExpr } = mealWaitingSQLParts();
-      where.push(`${isMealExpr} AND ${waitingExpr}`);
-    } else if (rawStatus) {
-      // Nếu FE truyền status=pending & kind=meal => hiểu là chờ duyệt
-      if (rawStatus === "pending" && kind === "meal") {
+      if (effectiveScope === "waiting_meal") {
         const { isMealExpr, waitingExpr } = mealWaitingSQLParts();
         where.push(`${isMealExpr} AND ${waitingExpr}`);
-      } else if (rawStatus !== "all" && rawStatus !== "pending_meal") {
-        where.push("LOWER(status)=?"); params.push(rawStatus);
+      } else if (rawStatus) {
+        // Nếu FE truyền status=pending & kind=meal => hiểu là chờ duyệt
+        if (rawStatus === "pending" && kind === "meal") {
+          const { isMealExpr, waitingExpr } = mealWaitingSQLParts();
+          where.push(`${isMealExpr} AND ${waitingExpr}`);
+        } else if (rawStatus !== "all" && rawStatus !== "pending_meal") {
+          where.push("LOWER(status)=?");
+          params.push(rawStatus);
+        }
       }
-    }
 
-    const rows = await dbAll(
-      `SELECT id, campaign_id, order_id, type, amount, qty, currency,
+      const rows = await dbAll(
+        `SELECT id, campaign_id, order_id, type, amount, qty, currency,
               donor_name, donor_note, bank_txn_id, bank_code, bank_account, memo,
               status, paid_at, created_at
        FROM donations
        ${where.length ? "WHERE " + where.join(" AND ") : ""}
        ORDER BY COALESCE(paid_at, created_at) ${order}, id ${order}
-       LIMIT ? OFFSET ?`, [...params, limit, offset]
-    );
+       LIMIT ? OFFSET ?`,
+        [...params, limit, offset]
+      );
 
-    res.json({ ok: true, items: rows });
-  } catch (err) {
-    console.error("[GET /api/admin/donations] error:", err);
-    res.status(500).json({ ok: false, message: "Không lấy được donations" });
+      res.json({ ok: true, items: rows });
+    } catch (err) {
+      console.error("[GET /api/admin/donations] error:", err);
+      res.status(500).json({ ok: false, message: "Không lấy được donations" });
+    }
   }
-});
+);
 
 /* POST /api/admin/donations */
-donationsRouter.post("/", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const {
-      campaign_id, type = "money", amount = 0, qty = 0, currency = "VND",
-      donor_name = "", donor_note = "", memo = "",
-      status = "success", paid_at = null,
-      bank_txn_id = null, bank_code = null, bank_account = null,
-      user_id = null, order_id = null,
-    } = req.body || {};
+donationsRouter.post(
+  "/",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const {
+        campaign_id,
+        type = "money",
+        amount = 0,
+        qty = 0,
+        currency = "VND",
+        donor_name = "",
+        donor_note = "",
+        memo = "",
+        status = "success",
+        paid_at = null,
+        bank_txn_id = null,
+        bank_code = null,
+        bank_account = null,
+        user_id = null,
+        order_id = null,
+      } = req.body || {};
 
-    if (!campaign_id) return res.status(422).json({ ok: false, message: "campaign_id là bắt buộc" });
+      if (!campaign_id)
+        return res
+          .status(422)
+          .json({ ok: false, message: "campaign_id là bắt buộc" });
 
-    const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
-    await dbRun(
-      `INSERT INTO donations
+      const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
+      await dbRun(
+        `INSERT INTO donations
         (order_id, campaign_id, user_id, type, amount, qty, currency,
          donor_name, donor_note, bank_txn_id, bank_code, bank_account, memo,
          status, paid_at, created_at)
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ${nowSQL})`,
-      [
-        order_id || bank_txn_id || "", campaign_id, user_id, type,
-        toNum(amount, 0), toNum(qty, 0), currency,
-        donor_name || null, donor_note || null,
-        bank_txn_id || null, bank_code || null, bank_account || null,
-        memo || null, status, paid_at,
-      ]
-    );
+        [
+          order_id || bank_txn_id || "",
+          campaign_id,
+          user_id,
+          type,
+          toNum(amount, 0),
+          toNum(qty, 0),
+          currency,
+          donor_name || null,
+          donor_note || null,
+          bank_txn_id || null,
+          bank_code || null,
+          bank_account || null,
+          memo || null,
+          status,
+          paid_at,
+        ]
+      );
 
-    if (status === "success") await recalcCampaignFromDonations(campaign_id);
-    res.status(201).json({ ok: true });
-  } catch (err) {
-    console.error("[POST /api/admin/donations] error:", err);
-    res.status(500).json({ ok: false, message: "Tạo donation thất bại" });
+      if (status === "success") await recalcCampaignFromDonations(campaign_id);
+      res.status(201).json({ ok: true });
+    } catch (err) {
+      console.error("[POST /api/admin/donations] error:", err);
+      res.status(500).json({ ok: false, message: "Tạo donation thất bại" });
+    }
   }
-});
+);
 
 /* PATCH /api/admin/donations/:donationId */
-donationsRouter.patch("/:donationId", requireAuth, requireRole("admin"), async (req, res) => {
-  try {
-    const donationId = req.params.donationId;
-    const cur = await dbGet(`SELECT id, campaign_id, status FROM donations WHERE id=?`, [donationId]);
-    if (!cur) return res.status(404).json({ ok: false, message: "Donation không tồn tại" });
+donationsRouter.patch(
+  "/:donationId",
+  requireAuth,
+  requireRole("admin"),
+  async (req, res) => {
+    try {
+      const donationId = req.params.donationId;
+      const cur = await dbGet(
+        `SELECT id, campaign_id, status FROM donations WHERE id=?`,
+        [donationId]
+      );
+      if (!cur)
+        return res
+          .status(404)
+          .json({ ok: false, message: "Donation không tồn tại" });
 
-    const next = (req.body?.status || cur.status || "").toLowerCase();
-    const amount = req.body?.amount;
-    const qty = req.body?.qty;
+      const next = (req.body?.status || cur.status || "").toLowerCase();
+      const amount = req.body?.amount;
+      const qty = req.body?.qty;
 
-    const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
-    const sets = [], args = [];
-    if (next) { sets.push("status=?"); args.push(next); }
-    if (amount != null) { sets.push("amount=?"); args.push(toNum(amount, 0)); }
-    if (qty != null) { sets.push("qty=?"); args.push(toNum(qty, 0)); }
-    if (next === "success") sets.push(`paid_at=COALESCE(paid_at, ${nowSQL})`);
-    if (!sets.length) return res.json({ ok: true, noop: true });
+      const nowSQL = useMySQL ? "CURRENT_TIMESTAMP" : "datetime('now')";
+      const sets = [],
+        args = [];
+      if (next) {
+        sets.push("status=?");
+        args.push(next);
+      }
+      if (amount != null) {
+        sets.push("amount=?");
+        args.push(toNum(amount, 0));
+      }
+      if (qty != null) {
+        sets.push("qty=?");
+        args.push(toNum(qty, 0));
+      }
+      if (next === "success") sets.push(`paid_at=COALESCE(paid_at, ${nowSQL})`);
+      if (!sets.length) return res.json({ ok: true, noop: true });
 
-    await dbRun(`UPDATE donations SET ${sets.join(", ")} WHERE id=?`, [...args, donationId]);
-    await recalcCampaignFromDonations(cur.campaign_id);
-    res.json({ ok: true });
-  } catch (err) {
-    console.error("[PATCH /api/admin/donations/:donationId] error:", err);
-    res.status(500).json({ ok: false, message: "Cập nhật donation thất bại" });
+      await dbRun(`UPDATE donations SET ${sets.join(", ")} WHERE id=?`, [
+        ...args,
+        donationId,
+      ]);
+      await recalcCampaignFromDonations(cur.campaign_id);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("[PATCH /api/admin/donations/:donationId] error:", err);
+      res
+        .status(500)
+        .json({ ok: false, message: "Cập nhật donation thất bại" });
+    }
   }
-});
+);
 
 export default router;
 export { donationsRouter };

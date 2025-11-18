@@ -3,8 +3,11 @@ import "dotenv/config";
 
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
-if (useMySQL) { ({ db } = await import("../lib/db.mysql.js")); }
-else          { ({ db } = await import("../lib/db.js")); }
+if (useMySQL) { // Khi dùng MySQL, import trực tiếp db.mysql.js
+  ({ db } = await import("../lib/db.mysql.js"));
+} else { // Khi dùng SQLite, import db.js (hoặc db.sqlite.js)
+  ({ db } = await import("../lib/db.js"));
+}
 
 const router = Router();
 
@@ -18,10 +21,20 @@ router.get("/", async (req, res) => {
 
   const where = ["status='available'", "visibility='public'"];
   const params = [];
-  if (q) { where.push("(title LIKE ? OR description LIKE ?)"); params.push(`%${q}%`, `%${q}%`); }
+  if (q) {
+    where.push("(title LIKE ? OR description LIKE ?)");
+    params.push(`%${q}%`, `%${q}%`);
+  }
   if (tag) {
-    if (useMySQL) { where.push("JSON_SEARCH(COALESCE(tags, JSON_ARRAY()), 'one', ?) IS NOT NULL"); params.push(tag); }
-    else { where.push("json_extract(tags, '$') LIKE ?"); params.push(`%${tag}%`); }
+    if (useMySQL) {
+      where.push(
+        "JSON_SEARCH(COALESCE(tags, JSON_ARRAY()), 'one', ?) IS NOT NULL"
+      );
+      params.push(tag);
+    } else {
+      where.push("json_extract(tags, '$') LIKE ?");
+      params.push(`%${tag}%`);
+    }
   }
 
   const sqlBase = `FROM food_items WHERE ${where.join(" AND ")}`;
@@ -32,16 +45,29 @@ router.get("/", async (req, res) => {
   let total, rows;
   if (useMySQL) {
     total = (await db.get(countSQL, params)).total;
-    rows  = await db.all(listSQL, [...params, Number(pageSize), off]);
+    rows = await db.all(listSQL, [...params, Number(pageSize), off]);
   } else {
     total = db.prepare(countSQL).get(...params).total;
-    rows  = db.prepare(listSQL).all(...params, Number(pageSize), off);
+    rows = db.prepare(listSQL).all(...params, Number(pageSize), off);
   }
-  rows.forEach(r => {
-    try { r.tags = JSON.parse(r.tags||"[]"); } catch { r.tags=[]; }
-    try { r.images = JSON.parse(r.images||"[]"); } catch { r.images=[]; }
+  rows.forEach((r) => {
+    try {
+      r.tags = JSON.parse(r.tags || "[]");
+    } catch {
+      r.tags = [];
+    }
+    try {
+      r.images = JSON.parse(r.images || "[]");
+    } catch {
+      r.images = [];
+    }
   });
-  res.json({ items: rows, page: Number(page), pageSize: Number(pageSize), total });
+  res.json({
+    items: rows,
+    page: Number(page),
+    pageSize: Number(pageSize),
+    total,
+  });
 });
 
 export default router;

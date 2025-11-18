@@ -4,7 +4,7 @@ import "dotenv/config";
 const useMySQL = (process.env.DB_DRIVER || "sqlite") === "mysql";
 let db;
 if (useMySQL) {
-  ({ db } = await import("./db.mysql.js"));
+  ({ db } = await import("./db.js"));
 } else {
   ({ db } = await import("./db.js"));
 }
